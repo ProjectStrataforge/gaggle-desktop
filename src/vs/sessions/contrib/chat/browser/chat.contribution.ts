@@ -47,6 +47,7 @@ import { Menus } from '../../../browser/menus.js';
 import { ISessionsChatViewStateService, SessionsChatViewStateService } from './chatViewStateService.js';
 import { SessionsChatResponseFileChangesService } from './sessionTurnChanges.js';
 import { IChatResponseFileChangesService } from '../../../../workbench/contrib/chat/browser/chatResponseFileChangesService.js';
+import { ITransientSideChatService, TransientSideChatService } from './transientSideChatService.js';
 
 
 class NewChatInSessionsWindowAction extends Action2 {
@@ -130,6 +131,7 @@ registerSingleton(ICustomizationHarnessService, SessionsCustomizationHarnessServ
 registerSingleton(IChatViewFactory, ChatViewFactory, InstantiationType.Delayed);
 registerSingleton(ISessionsChatViewStateService, SessionsChatViewStateService, InstantiationType.Delayed);
 registerSingleton(IChatResponseFileChangesService, SessionsChatResponseFileChangesService, InstantiationType.Delayed);
+registerSingleton(ITransientSideChatService, TransientSideChatService, InstantiationType.Delayed);
 
 // register accessibility help
 AccessibleViewRegistry.register(new SessionsChatAccessibilityHelp());
