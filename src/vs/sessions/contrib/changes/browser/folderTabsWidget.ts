@@ -109,12 +109,19 @@ export class FolderTabsWidget extends Disposable {
 			// sent session has no session row yet, so the workspace folder is a
 			// tab in its own right and is the active one when no session is.
 			let activeKey = active?.resource.toString();
+			let workspaceTabKey: string | undefined;
 			for (const folder of this._workspaceContextService.getWorkspace().folders) {
 				const key = FolderTabsWidget.WORKSPACE_TAB_PREFIX + folder.uri.toString();
 				inputs.push({ sessionKey: key, folderKey: folderKeyFor(folder.uri.toString()), folderLabel: folder.name, order: Number.MAX_SAFE_INTEGER });
-				if (!activeKey) {
-					activeKey = key;
-				}
+				workspaceTabKey ??= key;
+			}
+			// An untitled session (the window's own "New session in <folder>")
+			// is the ACTIVE session but is not in the sessions list, so its key
+			// matches no tab and the strip would mark none active — leaving the
+			// open/close chevron unreachable. The folder it sits in is the
+			// window's workspace folder, so that tab is the active one.
+			if (!activeKey || !inputs.some(input => input.sessionKey === activeKey)) {
+				activeKey = workspaceTabKey ?? activeKey;
 			}
 			this._recompute(inputs, activeKey);
 		}));
