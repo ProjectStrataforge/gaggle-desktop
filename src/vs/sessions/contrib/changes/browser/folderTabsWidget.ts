@@ -16,6 +16,7 @@ import { localize } from '../../../../nls.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
+import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { NEW_SESSION_ACTION_ID } from '../../chat/common/constants.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
 import { ISession } from '../../../services/sessions/common/session.js';
@@ -52,6 +53,8 @@ export class FolderTabsWidget extends Disposable {
 
 	/** Fixed strip height so hosts can lay out before the first paint. */
 	static readonly HEIGHT = 30;
+	/** Tab keys for the window's workspace folders (no session row behind them). */
+	private static readonly WORKSPACE_TAB_PREFIX = 'workspace:';
 
 	private readonly _domNode: HTMLElement;
 	private readonly _tabsDisposables = this._register(new DisposableStore());
@@ -74,6 +77,7 @@ export class FolderTabsWidget extends Disposable {
 		@IStorageService private readonly _storageService: IStorageService,
 		@ICommandService private readonly _commandService: ICommandService,
 		@IHoverService private readonly _hoverService: IHoverService,
+		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 	) {
 		super();
 		this._domNode = dom.append(container, $('.folder-tabs-widget'));
@@ -82,6 +86,7 @@ export class FolderTabsWidget extends Disposable {
 		this._domNode.style.display = 'none';
 
 		this._register(this._sessionsManagementService.onDidChangeSessions(() => this._sessionsChanged.trigger(undefined)));
+		this._register(this._workspaceContextService.onDidChangeWorkspaceFolders(() => this._sessionsChanged.trigger(undefined)));
 		this._register(autorun(reader => {
 			this._sessionsChanged.read(reader);
 			const active = this._sessionsService.activeSession.read(reader);
@@ -99,7 +104,19 @@ export class FolderTabsWidget extends Disposable {
 					order: session.createdAt.getTime(),
 				});
 			}
-			this._recompute(inputs, active?.resource.toString());
+			// The folder the areas show right now is the sessions window's
+			// WORKSPACE folder (the New Session picker sets it) — a new, not-yet-
+			// sent session has no session row yet, so the workspace folder is a
+			// tab in its own right and is the active one when no session is.
+			let activeKey = active?.resource.toString();
+			for (const folder of this._workspaceContextService.getWorkspace().folders) {
+				const key = FolderTabsWidget.WORKSPACE_TAB_PREFIX + folder.uri.toString();
+				inputs.push({ sessionKey: key, folderKey: folderKeyFor(folder.uri.toString()), folderLabel: folder.name, order: Number.MAX_SAFE_INTEGER });
+				if (!activeKey) {
+					activeKey = key;
+				}
+			}
+			this._recompute(inputs, activeKey);
 		}));
 	}
 
@@ -236,6 +253,12 @@ export class FolderTabsWidget extends Disposable {
 		const session = this._sessionsByKey.get(tab.sessionKey);
 		if (session) {
 			void this._sessionsService.openSession(session.resource, { preserveFocus: true });
+			return;
+		}
+		// A workspace-only tab has no session to open; the New Session picker is
+		// the sanctioned way to move the window onto another folder.
+		if (tab.sessionKey.startsWith(FolderTabsWidget.WORKSPACE_TAB_PREFIX)) {
+			void this._commandService.executeCommand(NEW_SESSION_ACTION_ID);
 		}
 	}
 
