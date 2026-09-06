@@ -62,6 +62,9 @@ export class FolderTabsWidget extends Disposable {
 	private readonly _sessionsByKey = new Map<string, ISession>();
 	private _tabs: IFolderTab[] = [];
 	private _activeFolderKey: string | undefined;
+	/** The active session at the last recompute — a CHANGE is what un-hides a folder. */
+	private _lastActiveSessionKey: string | undefined;
+	private _sawFirstRecompute = false;
 
 	private readonly _onDidChangeActiveCollapsed = this._register(new Emitter<boolean>());
 	/** Fires with the collapsed state of the ACTIVE folder whenever it may have changed. */
@@ -146,11 +149,21 @@ export class FolderTabsWidget extends Disposable {
 		const wasVisible = this.visible;
 		const wasCollapsed = this.activeCollapsed;
 
-		// Activation brings a closed folder's tab back (close is view-level).
+		// Activating a session of a closed folder brings its tab back — but only
+		// on an actual CHANGE of active session. Re-deriving it on every
+		// recompute would un-hide the tab the operator just closed, since
+		// closing the ACTIVE tab leaves that same session active.
 		this._activeFolderKey = activeFolderKey(inputs, activeSessionKey);
-		const hidden = hiddenAfterActivation(this._readHidden(), this._activeFolderKey);
-		if (hidden.length !== this._readHidden().length) {
-			this._writeHidden(hidden);
+		const activeChanged = this._sawFirstRecompute && activeSessionKey !== this._lastActiveSessionKey;
+		this._lastActiveSessionKey = activeSessionKey;
+		this._sawFirstRecompute = true;
+		let hidden = this._readHidden();
+		if (activeChanged) {
+			const next = hiddenAfterActivation(hidden, this._activeFolderKey);
+			if (next.length !== hidden.length) {
+				this._writeHidden(next);
+				hidden = next;
+			}
 		}
 
 		this._tabs = computeFolderTabs(inputs, activeSessionKey, hidden);

@@ -81,6 +81,7 @@
 .folder-tabs-widget .folder-tab:focus-within .group-chevron,
 .folder-tabs-widget .folder-tab:focus-within .folder-tab-close,
 .folder-tabs-widget .folder-tab.active .group-chevron,
+.folder-tabs-widget .folder-tab.active .folder-tab-close,
 .folder-tabs-widget .folder-tab.collapsed .group-chevron {
 	opacity: 0.7;
 }
