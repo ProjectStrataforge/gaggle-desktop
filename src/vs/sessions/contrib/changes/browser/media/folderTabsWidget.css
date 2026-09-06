@@ -1,0 +1,128 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Gaggle 113 — folder tab strip above the Changes / Files areas */
+.folder-tabs-widget {
+	display: flex;
+	align-items: center;
+	flex-shrink: 0;
+	box-sizing: border-box;
+	height: 30px;
+	padding: 0 4px;
+	gap: 2px;
+	overflow-x: auto;
+	overflow-y: hidden;
+	scrollbar-width: none;
+	font-size: var(--vscode-agents-fontSize-label1, 12px);
+	border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, transparent);
+	user-select: none;
+}
+
+.folder-tabs-widget::-webkit-scrollbar {
+	display: none;
+}
+
+.folder-tabs-widget .folder-tab {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	height: 22px;
+	max-width: 180px;
+	padding: 0 6px;
+	border-radius: var(--vscode-cornerRadius-small, 4px);
+	color: var(--vscode-foreground);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.folder-tabs-widget .folder-tab:hover {
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.folder-tabs-widget .folder-tab.active {
+	color: var(--vscode-strongForeground, var(--vscode-foreground));
+	font-weight: var(--vscode-agents-fontWeight-semiBold, 600);
+	background-color: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.folder-tabs-widget .folder-tab:focus-visible {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: -1px;
+}
+
+.folder-tabs-widget .folder-tab-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.folder-tabs-widget .folder-tab-count {
+	font-weight: normal;
+	opacity: 0.7;
+}
+
+/* Chevron (active tab only) and close: visible on hover, focus, or when collapsed */
+.folder-tabs-widget .folder-tab .group-chevron,
+.folder-tabs-widget .folder-tab .folder-tab-close {
+	width: 18px;
+	height: 18px;
+	border-radius: var(--vscode-cornerRadius-small, 4px);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: var(--vscode-codiconFontSize-compact, 12px);
+	opacity: 0;
+}
+
+.folder-tabs-widget .folder-tab:hover .group-chevron,
+.folder-tabs-widget .folder-tab:hover .folder-tab-close,
+.folder-tabs-widget .folder-tab:focus-within .group-chevron,
+.folder-tabs-widget .folder-tab:focus-within .folder-tab-close,
+.folder-tabs-widget .folder-tab.active .group-chevron,
+.folder-tabs-widget .folder-tab.collapsed .group-chevron {
+	opacity: 0.7;
+}
+
+.folder-tabs-widget .folder-tab .group-chevron:hover,
+.folder-tabs-widget .folder-tab .folder-tab-close:hover {
+	opacity: 1;
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+.folder-tabs-widget .folder-tab.collapsed .group-chevron {
+	transform: rotate(-90deg);
+}
+
+.folder-tabs-widget .folder-tabs-add {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: var(--vscode-cornerRadius-small, 4px);
+	opacity: 0.7;
+	cursor: pointer;
+}
+
+.folder-tabs-widget .folder-tabs-add:hover {
+	opacity: 1;
+	background-color: var(--vscode-toolbar-hoverBackground);
+}
+
+/* Collapsed folder: the host pane hides everything below the strip */
+.changes-view-body.folder-collapsed .chat-editing-session-actions,
+.changes-view-body.folder-collapsed .changes-splitview-container,
+.folder-collapsed > .explorer-folders-view {
+	display: none !important;
+}
+
+.folder-tabs-widget .folder-tabs-empty {
+	flex: 1;
+	padding: 0 6px;
+	color: var(--vscode-descriptionForeground);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}

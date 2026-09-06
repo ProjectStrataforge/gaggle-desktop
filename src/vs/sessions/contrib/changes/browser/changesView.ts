@@ -87,6 +87,7 @@ import { IViewsService } from '../../../../workbench/services/views/common/views
 import { ServiceCollection } from '../../../../platform/instantiation/common/serviceCollection.js';
 import { IMarkdownString } from '../../../../base/common/htmlContent.js';
 import { ChangesViewSection, IChangesViewService } from '../common/changesViewService.js';
+import { FolderTabsWidget } from './folderTabsWidget.js';
 import { ChangesSummaryWidget } from './changesSummaryWidget.js';
 import { Menus } from '../../../browser/menus.js';
 import { IAgentWorkbenchLayoutService } from '../../../browser/workbench.js';
@@ -524,6 +525,8 @@ export class ChangesViewPane extends ViewPane {
 	private tree: WorkbenchCompressibleObjectTree<ChangesTreeElement> | undefined;
 	private ciStatusWidget: CIStatusWidget | undefined;
 	private sessionFilesWidget: SessionFilesWidget | undefined;
+	// Gaggle 113: folder tab strip above the actions and the split view.
+	private folderTabsWidget: FolderTabsWidget | undefined;
 	private splitView: SplitView | undefined;
 	private splitViewContainer: HTMLElement | undefined;
 	private readonly treePaneSizeChange = this._register(new Emitter<number | undefined>());
@@ -642,6 +645,13 @@ export class ChangesViewPane extends ViewPane {
 		super.renderBody(container);
 
 		this.bodyContainer = dom.append(container, $('.changes-view-body'));
+
+		// Gaggle 113: one tab per open-session folder; collapsing the active
+		// folder hides everything below the strip (class + CSS, never inline
+		// styles the vendor autoruns could overwrite).
+		this.folderTabsWidget = this._register(this.scopedInstantiationService.createInstance(FolderTabsWidget, this.bodyContainer));
+		this._register(this.folderTabsWidget.onDidChangeActiveCollapsed(() => this.applyFolderCollapsed()));
+		this._register(this.folderTabsWidget.onDidChangeVisibility(() => this.layoutSplitView()));
 
 		// Actions container - positioned outside and above the card
 		this.actionsContainer = dom.append(this.bodyContainer, $('.chat-editing-session-actions.outside-card'));
@@ -806,6 +816,13 @@ export class ChangesViewPane extends ViewPane {
 		if (this.isBodyVisible()) {
 			this.onVisible();
 		}
+		this.applyFolderCollapsed();
+	}
+
+	/** Gaggle 113: the active folder's open/close state hides the body below the strip. */
+	private applyFolderCollapsed(): void {
+		this.bodyContainer?.classList.toggle('folder-collapsed', this.folderTabsWidget?.activeCollapsed === true);
+		this.layoutSplitView();
 	}
 
 	override getActionsContext(): URI | undefined {
@@ -1086,9 +1103,10 @@ export class ChangesViewPane extends ViewPane {
 			return 0;
 		}
 		const bodyPadding = 16;
+		const folderTabsHeight = this.folderTabsWidget?.height ?? 0;
 		const actionsHeight = this.actionsContainer?.offsetHeight ?? 0;
 		const actionsMargin = actionsHeight > 0 ? 8 : 0;
-		return Math.max(0, bodyHeight - bodyPadding - actionsHeight - actionsMargin);
+		return Math.max(0, bodyHeight - bodyPadding - folderTabsHeight - actionsHeight - actionsMargin);
 	}
 
 	/** Layout the SplitView to fill available body space. */

@@ -22,6 +22,7 @@ import { IAction } from '../../../../base/common/actions.js';
 import { IActionViewItem } from '../../../../base/browser/ui/actionbar/actionbar.js';
 import { IDropdownMenuActionViewItemOptions } from '../../../../base/browser/ui/dropdown/dropdownActionViewItem.js';
 import { SyncChangesActionViewItem } from './syncChangesActionViewItem.js';
+import { FolderTabsWidget } from '../../changes/browser/folderTabsWidget.js';
 
 const $ = dom.$;
 
@@ -29,8 +30,40 @@ export const SESSIONS_FILES_VIEW_ID = 'sessions.files.explorer';
 export const SESSIONS_FILES_EMPTY_VIEW_ID = 'sessions.files.explorer.empty';
 
 export class SessionsExplorerView extends ExplorerView {
+
+	// Gaggle 113: folder tab strip above the explorer tree (shared with the
+	// Changes view). Collapsing the active folder hides the tree below it.
+	private _folderTabs: FolderTabsWidget | undefined;
+	private _folderTabsHost: HTMLElement | undefined;
+	private _lastBodyLayout: { height: number; width: number } | undefined;
+
 	protected override get primaryActionGroups(): string[] | undefined {
 		return ['1_files'];
+	}
+
+	protected override renderBody(container: HTMLElement): void {
+		this._folderTabsHost = container;
+		this._folderTabs = this._register(this.instantiationService.createInstance(FolderTabsWidget, container));
+		super.renderBody(container);
+		this._register(this._folderTabs.onDidChangeActiveCollapsed(() => this._applyFolderCollapsed()));
+		this._register(this._folderTabs.onDidChangeVisibility(() => this._relayoutBody()));
+		this._applyFolderCollapsed();
+	}
+
+	protected override layoutBody(height: number, width: number): void {
+		this._lastBodyLayout = { height, width };
+		super.layoutBody(Math.max(0, height - (this._folderTabs?.height ?? 0)), width);
+	}
+
+	private _applyFolderCollapsed(): void {
+		this._folderTabsHost?.classList.toggle('folder-collapsed', this._folderTabs?.activeCollapsed === true);
+		this._relayoutBody();
+	}
+
+	private _relayoutBody(): void {
+		if (this._lastBodyLayout) {
+			this.layoutBody(this._lastBodyLayout.height, this._lastBodyLayout.width);
+		}
 	}
 
 	protected override getLocationBasedColors(): IViewPaneLocationColors {
