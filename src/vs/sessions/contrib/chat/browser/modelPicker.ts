@@ -4,16 +4,19 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { Disposable, DisposableStore } from '../../../../base/common/lifecycle.js';
-import { autorun, derived, IObservable } from '../../../../base/common/observable.js';
+import { autorun, derived, IObservable, observableValue } from '../../../../base/common/observable.js';
 import { localize2 } from '../../../../nls.js';
 import { BaseActionViewItem } from '../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { IInstantiationService } from '../../../../platform/instantiation/common/instantiation.js';
+import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { ITelemetryService } from '../../../../platform/telemetry/common/telemetry.js';
 import { IWorkspaceTrustManagementService } from '../../../../platform/workspace/common/workspaceTrust.js';
 import { IChatInputPickerOptions } from '../../../../workbench/contrib/chat/browser/widget/input/chatInputPickerActionItem.js';
 import { IModelPickerDelegate, ModelPickerActionItem } from '../../../../workbench/contrib/chat/browser/widget/input/modelPicker/modelPickerActionItem.js';
+import { ILanguageModelChatMetadataAndIdentifier, ILanguageModelsService } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { IChatEntitlementService } from '../../../../workbench/services/chat/common/chatEntitlementService.js';
 import { Menus } from '../../../browser/menus.js';
 import { IsPhoneLayoutContext, SessionUsesCombinedConfigPickerContext } from '../../../common/contextkeys.js';
@@ -23,6 +26,23 @@ import { ISessionModelSelectionModel } from './sessionModelSelectionModel.js';
 import { INewChatModelPickerService } from './newChatModelPicker.js';
 import { reportNewChatPickerClosed } from './newChatPickerTelemetry.js';
 import { markOnboardingTarget } from '../../../../workbench/contrib/onboarding/browser/spotlight/onboardingTarget.js';
+
+/**
+ * Gaggle (StrataForge): the SMR model plane surfaced in the sessions picker.
+ *
+ * The sessions picker is provider-scoped — it lists the ACTIVE agent-host
+ * agent's models (`ISessionsProvider.getModelsSnapshot`) and hides itself when
+ * that list is empty. Goose's model plane is the SMR language-model provider
+ * (`gaggle-smr`, registered by the gaggle-chat extension), which no agent-host
+ * agent ever lists. So the picker additionally offers every user-selectable
+ * `gaggle-smr` model; picking one is an SMR ROUTING decision (the 112 routing
+ * control's `agents-pin` / `agents-auto` verbs, dispatched through
+ * {@link GAGGLE_SMR_SELECT_COMMAND}), never a provider `setModel`. The pick is
+ * remembered per profile so a reload keeps the label honest.
+ */
+const GAGGLE_SMR_VENDOR = 'gaggle-smr';
+const GAGGLE_SMR_SELECT_COMMAND = 'gaggle.smr.selectAgentsModel';
+const GAGGLE_SMR_SELECTED_STORAGE_KEY = 'sessions.modelPicker.gaggle-smr.selectedModelIdentifier';
 
 /**
  * The sessions-core model picker. Unlike the previous per-provider pickers,
@@ -39,6 +59,7 @@ export class ModelPicker extends Disposable {
 	private readonly _modelPicker: ModelPickerActionItem;
 	private readonly _renderDisposables = this._register(new DisposableStore());
 	private _container: HTMLElement | undefined;
+	private readonly _gaggleSmrSelected = observableValue<ILanguageModelChatMetadataAndIdentifier | undefined>(this, undefined);
 
 	constructor(
 		compact: IObservable<boolean>,
@@ -49,14 +70,22 @@ export class ModelPicker extends Disposable {
 		@IChatEntitlementService private readonly _chatEntitlementService: IChatEntitlementService,
 		@ISessionContext private readonly _sessionContext: ISessionContext,
 		@ISessionModelSelectionModel private readonly _selectionModel: ISessionModelSelectionModel,
+		@ILanguageModelsService private readonly _languageModelsService: ILanguageModelsService,
+		@ICommandService private readonly _commandService: ICommandService,
+		@IStorageService private readonly _storageService: IStorageService,
 	) {
 		super();
-		const currentModel = derived(this, reader => this._selectionModel.state.read(reader).currentModel);
+		const currentModel = derived(this, reader => this._gaggleSmrSelected.read(reader) ?? this._selectionModel.state.read(reader).currentModel);
 
 		this._delegate = {
 			currentModel,
 			setModel: model => {
-				const previousModel = this._selectionModel.state.get().currentModel;
+				const previousModel = currentModel.get();
+				if (model.metadata.vendor === GAGGLE_SMR_VENDOR) {
+					this._selectGaggleSmrModel(model, previousModel);
+					return;
+				}
+				this._clearGaggleSmrSelection();
 				if (this._selectionModel.selectModel(model.identifier)) {
 					reportNewChatPickerClosed(this._telemetryService, {
 						id: 'NewChatModelPicker',
@@ -68,11 +97,17 @@ export class ModelPicker extends Disposable {
 					});
 				}
 			},
-			getModels: () => [...this._selectionModel.state.get().models],
-			getPresentationOptions: () => ({
-				...this._selectionModel.state.get().options,
-				showModelIcon: true,
-			}),
+			getModels: () => [...this._selectionModel.state.get().models, ...this._gaggleSmrModels()],
+			getPresentationOptions: () => {
+				const state = this._selectionModel.state.get();
+				return {
+					...state.options,
+					// With no provider model the provider's synthetic Auto would sit
+					// beside SMR's own "auto" route entry; SMR's is the honest one.
+					showAutoModel: state.models.length > 0 ? state.options.showAutoModel : false,
+					showModelIcon: true,
+				};
+			},
 			isCacheWarm: () => {
 				const session = this._sessionContext.session.get();
 				// The session's prompt cache is warm once its first request has
@@ -94,6 +129,15 @@ export class ModelPicker extends Disposable {
 
 		this._register(autorun(reader => {
 			this._selectionModel.state.read(reader);
+			this._updatePickerState();
+		}));
+
+		// SMR models register asynchronously (the extension resolves its catalog
+		// after activation); recompute visibility and restore the remembered pick
+		// whenever the language-model registry changes.
+		this._restoreGaggleSmrSelection();
+		this._register(this._languageModelsService.onDidChangeLanguageModels(() => {
+			this._restoreGaggleSmrSelection();
 			this._updatePickerState();
 		}));
 
@@ -128,7 +172,63 @@ export class ModelPicker extends Disposable {
 	}
 
 	switchToModel(modelIdentifier: string): boolean {
+		const smr = this._gaggleSmrModels().find(model => model.identifier === modelIdentifier);
+		if (smr) {
+			this._selectGaggleSmrModel(smr, this._delegate.currentModel.get());
+			return true;
+		}
+		this._clearGaggleSmrSelection();
 		return this._selectionModel.selectModel(modelIdentifier);
+	}
+
+	/** Every user-selectable model the Goose SMR provider currently registers. */
+	private _gaggleSmrModels(): ILanguageModelChatMetadataAndIdentifier[] {
+		const models: ILanguageModelChatMetadataAndIdentifier[] = [];
+		for (const identifier of this._languageModelsService.getLanguageModelIds()) {
+			const metadata = this._languageModelsService.lookupLanguageModel(identifier);
+			if (metadata?.vendor === GAGGLE_SMR_VENDOR && metadata.isUserSelectable !== false) {
+				models.push({ identifier, metadata });
+			}
+		}
+		return models;
+	}
+
+	private _selectGaggleSmrModel(model: ILanguageModelChatMetadataAndIdentifier, previousModel: ILanguageModelChatMetadataAndIdentifier | undefined): void {
+		this._gaggleSmrSelected.set(model, undefined);
+		this._storageService.store(GAGGLE_SMR_SELECTED_STORAGE_KEY, model.identifier, StorageScope.PROFILE, StorageTarget.USER);
+		// The routing decision lives in the extension (112 routing control);
+		// the picker only names the choice. Failures surface there, never here.
+		this._commandService.executeCommand(GAGGLE_SMR_SELECT_COMMAND, model.metadata.id).then(undefined, () => { });
+		reportNewChatPickerClosed(this._telemetryService, {
+			id: 'NewChatModelPicker',
+			optionIdBefore: previousModel?.identifier,
+			optionIdAfter: model.identifier,
+			optionLabelBefore: previousModel?.metadata.name,
+			optionLabelAfter: model.metadata.name,
+			isPII: false,
+		});
+	}
+
+	private _clearGaggleSmrSelection(): void {
+		if (this._gaggleSmrSelected.get()) {
+			this._gaggleSmrSelected.set(undefined, undefined);
+		}
+		this._storageService.remove(GAGGLE_SMR_SELECTED_STORAGE_KEY, StorageScope.PROFILE);
+	}
+
+	/** Re-bind the remembered SMR pick once its model is registered (never before). */
+	private _restoreGaggleSmrSelection(): void {
+		if (this._gaggleSmrSelected.get()) {
+			return;
+		}
+		const remembered = this._storageService.get(GAGGLE_SMR_SELECTED_STORAGE_KEY, StorageScope.PROFILE);
+		if (!remembered) {
+			return;
+		}
+		const model = this._gaggleSmrModels().find(candidate => candidate.identifier === remembered);
+		if (model) {
+			this._gaggleSmrSelected.set(model, undefined);
+		}
 	}
 
 	/**
@@ -141,7 +241,7 @@ export class ModelPicker extends Disposable {
 	 */
 	private _shouldShowPicker(): boolean {
 		const state = this._selectionModel.state.get();
-		if (state.models.length > 0) {
+		if (state.models.length > 0 || this._gaggleSmrModels().length > 0) {
 			return true;
 		}
 		if (this._modelPicker.isRestrictedMode() || this._modelPicker.isSetupRequired()) {
