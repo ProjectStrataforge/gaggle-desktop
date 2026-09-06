@@ -25,7 +25,9 @@ import { IAgentConfigurationService } from './agentConfigurationService.js';
 import { IAgentHostGitHubEndpointService } from './agentHostGitHubEndpointService.js';
 import { IAgentHostCompletions } from './agentHostCompletions.js';
 import { IAgentHostTerminalManager } from './agentHostTerminalManager.js';
-import { CopilotAgent } from './copilot/copilotAgent.js';
+import { CopilotAgent, copilotCliResolvable } from './copilot/copilotAgent.js';
+import { GaggleAgent } from './gaggle/gaggleAgent.js';
+import { getAppNodeModulesPath } from './appNodeModules.js';
 import { WorktreeIsolation } from './shared/worktreeIsolation.js';
 import { CopilotApiService, ICopilotApiService } from './shared/copilotApiService.js';
 import { ClaudeAgent } from './claude/claudeAgent.js';
@@ -62,7 +64,7 @@ import { localize } from '../../../nls.js';
 import { FileService } from '../../files/common/fileService.js';
 import { IFileService } from '../../files/common/files.js';
 import { DiskFileSystemProvider } from '../../files/node/diskFileSystemProvider.js';
-import { Schemas } from '../../../base/common/network.js';
+import { FileAccess, Schemas } from '../../../base/common/network.js';
 import { IInstantiationService } from '../../instantiation/common/instantiation.js';
 import { InstantiationService } from '../../instantiation/common/instantiationService.js';
 import { ServiceCollection } from '../../instantiation/common/serviceCollection.js';
@@ -243,7 +245,17 @@ async function startAgentHost(): Promise<void> {
 		diServices.set(IClaudeProxyService, claudeProxyService);
 		const codexProxyService = disposables.add(instantiationService.createInstance(CodexProxyService));
 		diServices.set(ICodexProxyService, codexProxyService);
-		agentService.registerProvider(instantiationService.createInstance(CopilotAgent));
+		// Gaggle 114 (provider honesty): a built product that strips the Copilot CLI
+		// (Goose does, by design) must not offer a provider that cannot create a
+		// session — every createSession would throw. Dev builds keep it.
+		if (!environmentService.isBuilt || copilotCliResolvable(FileAccess.asFileUri(getAppNodeModulesPath()))) {
+			agentService.registerProvider(instantiationService.createInstance(CopilotAgent));
+		} else {
+			logService.info('copilotcli not registered: its CLI does not resolve in this built product (Gaggle 114)');
+		}
+		// Gaggle 114: the Goose agent — the SMR SDK for every generative call
+		// (Principle I), SovereignDB for memory (Principle II).
+		agentService.registerProvider(instantiationService.createInstance(GaggleAgent, undefined));
 		// Claude and Codex providers are gated on two things:
 		//  1. The user-facing enable toggle (`chat.agentHost.<x>Agent.enabled`,
 		//     forwarded as an env var by the starters). Claude defaults to on,

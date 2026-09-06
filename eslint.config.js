@@ -1685,7 +1685,9 @@ export default defineConfig(
 						'@anthropic-ai/claude-agent-sdk', // used by agentHost for Claude Agent SDK session enumeration / queries
 						'@modelcontextprotocol/sdk/**/*', // used by agentHost for Claude client-tool MCP result types (Phase 10)
 						'@github/copilot-sdk',
-						'zod' // used by agentHost for Claude client-tool MCP input schemas
+						'zod', // used by agentHost for Claude client-tool MCP input schemas
+						'@projectstrataforge/sovereign-router-sdk', // Gaggle 114: the SMR client — the only generative egress of the Gaggle provider (Principle I)
+						'@projectstrataforge/sovereign-db-sdk' // Gaggle 114 / sovereign-db 1030: SovereignDB memory for the Gaggle provider (Principle II)
 					]
 				},
 				{

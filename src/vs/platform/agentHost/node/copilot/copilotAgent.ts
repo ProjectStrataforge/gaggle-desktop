@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { CopilotClient, RuntimeConnection, type CopilotClientOptions, type GitHubTelemetryNotification, type ManagedSettingsResolvedData, type SessionMode as CopilotSdkMode } from '@github/copilot-sdk';
+import { existsSync } from 'fs';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import { pathToFileURL } from 'url';
@@ -140,6 +141,20 @@ function getCopilotPlatformPackageCandidates(): string[] {
 
 	const linuxCandidates = [`linux-${process.arch}`, `linuxmusl-${process.arch}`];
 	return isLinuxMuslRuntime() ? linuxCandidates.reverse() : linuxCandidates;
+}
+
+/**
+ * Gaggle 114 (provider honesty): true when one of the Copilot CLI entry points this
+ * provider would resolve actually exists under `nodeModulesUri`. Built products
+ * that strip the CLI (Goose does, by design) use this to skip registering a
+ * provider that could never create a session. Synchronous so the registration
+ * sites need no restructuring.
+ */
+export function copilotCliResolvable(nodeModulesUri: URI): boolean {
+	const candidates = getCopilotPlatformPackageCandidates().map(platformPackage =>
+		URI.joinPath(nodeModulesUri, '@github', `copilot-${platformPackage}`, 'index.js').fsPath);
+	candidates.push(URI.joinPath(nodeModulesUri, '@github', 'copilot', 'index.js').fsPath);
+	return candidates.some(candidate => existsSync(candidate));
 }
 
 async function resolveCopilotCliPath(nodeModulesUri: URI): Promise<string> {
