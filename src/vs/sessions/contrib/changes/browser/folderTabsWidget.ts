@@ -14,6 +14,7 @@ import { autorun, observableSignal } from '../../../../base/common/observable.js
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { localize } from '../../../../nls.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IFileDialogService } from '../../../../platform/dialogs/common/dialogs.js';
 import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
@@ -81,6 +82,7 @@ export class FolderTabsWidget extends Disposable {
 		@ICommandService private readonly _commandService: ICommandService,
 		@IHoverService private readonly _hoverService: IHoverService,
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
+		@IFileDialogService private readonly _fileDialogService: IFileDialogService,
 	) {
 		super();
 		this._domNode = dom.append(container, $('.folder-tabs-widget'));
@@ -197,10 +199,10 @@ export class FolderTabsWidget extends Disposable {
 		const add = dom.append(this._domNode, $('.folder-tabs-add'));
 		add.classList.add(...ThemeIcon.asClassNameArray(Codicon.add));
 		add.setAttribute('role', 'button');
-		add.setAttribute('aria-label', localize('folderTabs.add', "New Session (open a folder)"));
+		add.setAttribute('aria-label', localize('folderTabs.add', "Open Folder..."));
 		add.tabIndex = 0;
-		this._tabsDisposables.add(this._hoverService.setupManagedHover(getDefaultHoverDelegate('mouse'), add, localize('folderTabs.addHover', "New Session — pick a folder to open")));
-		this._onActivate(add, () => this._commandService.executeCommand(NEW_SESSION_ACTION_ID));
+		this._tabsDisposables.add(this._hoverService.setupManagedHover(getDefaultHoverDelegate('mouse'), add, localize('folderTabs.addHover', "Open a folder — browse the file system and start a session there")));
+		this._onActivate(add, () => this._openFolder());
 	}
 
 	private _renderTab(tab: IFolderTab): void {
@@ -264,6 +266,26 @@ export class FolderTabsWidget extends Disposable {
 				handler();
 			}
 		}));
+	}
+
+	/**
+	 * Browse the file system for a folder and open it. The OS dialog is the
+	 * affordance the operator expects from a "+" beside Files; the session is
+	 * then opened through the sessions service, the same call the vendor's own
+	 * "New Session in Folder..." makes after its picker.
+	 */
+	private async _openFolder(): Promise<void> {
+		const picked = await this._fileDialogService.showOpenDialog({
+			canSelectFolders: true,
+			canSelectFiles: false,
+			canSelectMany: false,
+			title: localize('folderTabs.openFolderTitle', "Open Folder"),
+		});
+		const folderUri = picked?.[0];
+		if (!folderUri) {
+			return;
+		}
+		await this._sessionsService.openNewSession({ folderUri });
 	}
 
 	private _activateTab(tab: IFolderTab): void {
