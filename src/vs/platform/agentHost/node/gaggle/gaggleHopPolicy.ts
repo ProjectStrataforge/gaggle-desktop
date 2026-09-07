@@ -126,6 +126,38 @@ export function joinUrl(base: string, path: string): string {
 	return `${root}${suffix}`;
 }
 
+/**
+ * Gaggle 119 — the assigned remote plane, as a protected resource the client can
+ * answer for.
+ *
+ * `required: false` deliberately, and for the reason `[116]` recorded about
+ * SovereignDB: a client treats an ABSENT `required` as `true` and refuses
+ * `createSession` outright for a resource it cannot authenticate. This resource
+ * is declared whenever a remote plane is assigned, but an operator on the LOCAL
+ * hop needs no client credential — so requiring it would break local sessions
+ * for everyone who also has a remote plane configured.
+ *
+ * `authorization_servers` carries the same assigned plane, which is how the
+ * client resolves a provider for it. Nothing here is invented: no assignment,
+ * no resource.
+ */
+export function remoteSmrResource(
+	env: GaggleHopEnv,
+): { resource: string; resource_name: string; required: boolean; authorization_servers: string[] } | undefined {
+	const config = loadHopConfig(env);
+	const named = firstNamedProfile(config);
+	if (!named) {
+		return undefined;
+	}
+	const resource = dataPlaneBase(normalizeHopBaseUrl(named.url));
+	return {
+		resource,
+		resource_name: 'Sovereign Model Router',
+		required: false,
+		authorization_servers: [resource],
+	};
+}
+
 export function localConfigured(config: GaggleHopConfig): boolean {
 	return Boolean(config.baseUrl && config.healthzPath);
 }

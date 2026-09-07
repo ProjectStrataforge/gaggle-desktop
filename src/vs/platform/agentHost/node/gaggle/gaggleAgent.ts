@@ -50,7 +50,7 @@ import { parseChatUri } from '../../common/state/sessionState.js';
 import { attributionPart } from './gaggleAttribution.js';
 import { gaggleCopy } from './gaggleCopy.js';
 import { resolveCredential, type GaggleEnv } from './gaggleCredential.js';
-import { anyHopConfigured, joinUrl, loadHopConfig, resolveHop, type GaggleHopProbes, type GaggleHopResolution, type GaggleResolvedHop } from './gaggleHopPolicy.js';
+import { anyHopConfigured, joinUrl, loadHopConfig, remoteSmrResource, resolveHop, type GaggleHopProbes, type GaggleHopResolution, type GaggleResolvedHop } from './gaggleHopPolicy.js';
 import { citationsPart, IGaggleMemoryBridge, isSovereignDbAssigned, memoryOffNoticePart, NullMemoryBridge } from './gaggleMemoryBridge.js';
 import { sovereignDbResource } from './gaggleSovereignDbMemoryBridge.js';
 import { AuthRequiredReason, type AuthRequiredParams } from '../../common/state/protocol/common/notifications.js';
@@ -114,6 +114,13 @@ export class GaggleAgent extends Disposable implements IAgent {
 	private readonly _memory: IGaggleMemoryBridge;
 	/** The signed-in user's SovereignDB bearer, supplied by the client. Memory only. */
 	private _sovereignDbToken: string | undefined;
+	/**
+	 * Gaggle 119 — the data-plane credential for the remote SMR, supplied by the
+	 * client from its vault. Memory only, and stored WITH the resource it was
+	 * given for: a key minted for one plane must never be presented to another,
+	 * which is a credential disclosure rather than a routing mistake.
+	 */
+	private _smrCredential: { readonly resource: string; readonly token: string } | undefined;
 	private _authRequested = false;
 	private readonly _remoteTokenProvider: TokenProvider | undefined;
 	private readonly _hopTtlMs: number;
@@ -170,8 +177,19 @@ export class GaggleAgent extends Disposable implements IAgent {
 	 * asked for a token covering the instance this deployment was pointed at.
 	 */
 	getProtectedResources(): ProtectedResourceMetadata[] {
-		const resource = sovereignDbResource(this._env);
-		return resource ? [resource] : [];
+		const resources: ProtectedResourceMetadata[] = [];
+		const sovereignDb = sovereignDbResource(this._env);
+		if (sovereignDb) {
+			resources.push(sovereignDb);
+		}
+		// 119: the assigned remote plane. Without this the agent host has no
+		// credential for it and presents the workstation's LOCAL key, which the
+		// plane correctly refuses (`invalid_api_key`).
+		const smr = remoteSmrResource(this._env);
+		if (smr) {
+			resources.push(smr);
+		}
+		return resources;
 	}
 
 	/**
@@ -181,17 +199,31 @@ export class GaggleAgent extends Disposable implements IAgent {
 	 */
 	async authenticate(resource: string, token: string): Promise<boolean> {
 		const declared = sovereignDbResource(this._env);
-		if (!declared || resource !== declared.resource) {
-			return false;
+		if (declared && resource === declared.resource) {
+			const changed = this._sovereignDbToken !== token;
+			this._sovereignDbToken = token;
+			if (changed) {
+				// The bridge reads the token through a provider, so an updated token is
+				// picked up on the next call without rebuilding anything.
+				this._logService.info('gaggle memory: SovereignDB credential accepted for the signed-in user');
+			}
+			return true;
 		}
-		const changed = this._sovereignDbToken !== token;
-		this._sovereignDbToken = token;
-		if (changed) {
-			// The bridge reads the token through a provider, so an updated token is
-			// picked up on the next call without rebuilding anything.
-			this._logService.info('gaggle memory: SovereignDB credential accepted for the signed-in user');
+		// 119: the remote SMR data plane. Stored with its resource so it can only
+		// ever be presented back to the plane it was issued for. The credential
+		// itself is never logged — not its value, not a prefix, not its length.
+		const smr = remoteSmrResource(this._env);
+		if (smr && resource === smr.resource) {
+			const changed = this._smrCredential?.token !== token;
+			this._smrCredential = { resource: smr.resource, token };
+			if (changed) {
+				this._clients.clear();
+				this._logService.info(`gaggle hop: data-plane credential accepted for ${smr.resource_name}`);
+			}
+			return true;
 		}
-		return true;
+		// An undeclared resource is refused rather than quietly accepted.
+		return false;
 	}
 
 	/**
@@ -261,8 +293,25 @@ export class GaggleAgent extends Disposable implements IAgent {
 		return this._hopInFlight;
 	}
 
+	/**
+	 * 119 — the client-supplied data-plane credential, but ONLY for the plane it
+	 * was issued for. A hop to any other plane falls through to the assigned
+	 * `SMR_API_KEY`, which is correct for local and honestly refused for a remote
+	 * plane we hold no credential for.
+	 */
+	private _smrTokenProviderFor(hop: GaggleResolvedHop): TokenProvider | undefined {
+		if (this._remoteTokenProvider) {
+			return this._remoteTokenProvider;
+		}
+		const held = this._smrCredential;
+		if (!held || hop.kind !== 'remote' || held.resource !== hop.dataPlaneBaseUrl) {
+			return undefined;
+		}
+		return () => held.token;
+	}
+
 	private _clientFor(hop: GaggleResolvedHop): Client | undefined {
-		const credential = resolveCredential(this._env, hop.kind, this._remoteTokenProvider);
+		const credential = resolveCredential(this._env, hop.kind, this._smrTokenProviderFor(hop));
 		if (!credential) {
 			return undefined;
 		}
