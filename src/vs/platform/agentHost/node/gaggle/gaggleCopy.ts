@@ -12,7 +12,7 @@ import { localize } from '../../../../nls.js';
 export const gaggleCopy = {
 	noHopConfigured: (): string => localize(
 		'gaggle.noHopConfigured',
-		"No model route is assigned. Set SMR_BASE_URL (local Slim) or SMR_REMOTE in your environment, then start a new session. See docs/desktop/fork-bootstrap.md."
+		"No model route is assigned. Set SMR_BASE_URL AND SMR_HEALTHZ_PATH (local Slim), or SMR_REMOTE, in your environment, then start a new session. See docs/desktop/fork-bootstrap.md."
 	),
 	noCredential: (hop: string): string => localize(
 		'gaggle.noCredential',

@@ -50,7 +50,7 @@ import { parseChatUri } from '../../common/state/sessionState.js';
 import { attributionPart } from './gaggleAttribution.js';
 import { gaggleCopy } from './gaggleCopy.js';
 import { resolveCredential, type GaggleEnv } from './gaggleCredential.js';
-import { anyHopConfigured, resolveHop, type GaggleHopProbes, type GaggleHopResolution, type GaggleResolvedHop } from './gaggleHopPolicy.js';
+import { anyHopConfigured, joinUrl, loadHopConfig, resolveHop, type GaggleHopProbes, type GaggleHopResolution, type GaggleResolvedHop } from './gaggleHopPolicy.js';
 import { citationsPart, IGaggleMemoryBridge, isSovereignDbAssigned, memoryOffNoticePart, NullMemoryBridge } from './gaggleMemoryBridge.js';
 import { sovereignDbResource } from './gaggleSovereignDbMemoryBridge.js';
 import { AuthRequiredReason, type AuthRequiredParams } from '../../common/state/protocol/common/notifications.js';
@@ -244,7 +244,17 @@ export class GaggleAgent extends Disposable implements IAgent {
 			if (resolution.ok) {
 				this._logService.info(`gaggle hop: ${resolution.hop.kind} (${resolution.hop.profile}, probe=${resolution.hop.probe})`);
 			} else {
-				this._logService.warn(`gaggle hop: none (${resolution.reason})`);
+				// Name the URL that was probed, not just the verdict. A MANGLED
+				// base or healthz path and a genuinely dead plane both surface as
+				// `local_down_cloud_disallowed`, and telling them apart cost four
+				// packaged runs on 2026-09-07 (a shell rewrote `/healthz` into a
+				// Windows path, so the probe asked a nonsense URL and the log said
+				// only "local down"). The URL is configuration, never a credential.
+				const config = loadHopConfig(this._env);
+				const probed = config.baseUrl && config.healthzPath
+					? ` probed=${joinUrl(config.baseUrl, config.healthzPath)}`
+					: '';
+				this._logService.warn(`gaggle hop: none (${resolution.reason})${probed}`);
 			}
 			return resolution;
 		});

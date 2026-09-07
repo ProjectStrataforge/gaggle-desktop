@@ -285,13 +285,21 @@ function titleOf(turn: GaggleTurnRecord): string {
  */
 export function sovereignDbResource(
 	env: Readonly<Record<string, string | undefined>>,
-): { resource: string; resource_name: string } | undefined {
+): { resource: string; resource_name: string; required: boolean } | undefined {
 	if (!isSovereignDbAssigned(env)) {
 		return undefined;
 	}
 	return {
 		resource: normalizeBase(env['SOVDB_BASE_URL']!.trim()),
 		resource_name: 'SovereignDB',
+		// Memory is BEST EFFORT: an unreachable SovereignDB produces one
+		// memory-off notice and the turn still streams. The protocol says a
+		// client treats an ABSENT `required` as `true`, and the host refuses
+		// createSession outright for a required resource it cannot authenticate
+		// — so omitting this made every session fail with "Authentication is
+		// required to start a session" wherever SOVDB_BASE_URL was assigned,
+		// for a capability the agent is happy to run without.
+		required: false,
 	};
 }
 
