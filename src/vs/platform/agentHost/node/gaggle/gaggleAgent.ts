@@ -52,6 +52,8 @@ import { gaggleCopy } from './gaggleCopy.js';
 import { resolveCredential, type GaggleEnv } from './gaggleCredential.js';
 import { anyHopConfigured, resolveHop, type GaggleHopProbes, type GaggleHopResolution, type GaggleResolvedHop } from './gaggleHopPolicy.js';
 import { citationsPart, IGaggleMemoryBridge, isSovereignDbAssigned, memoryOffNoticePart, NullMemoryBridge } from './gaggleMemoryBridge.js';
+import { sovereignDbResource } from './gaggleSovereignDbMemoryBridge.js';
+import { AuthRequiredReason, type AuthRequiredParams } from '../../common/state/protocol/common/notifications.js';
 import { GaggleModelCatalog } from './gaggleModelCatalog.js';
 import { GaggleSessionStore, titleFromPrompt } from './gaggleSessionStore.js';
 import { runTurn, toUsageInfo } from './gaggleTurnRunner.js';
@@ -104,9 +106,15 @@ export class GaggleAgent extends Disposable implements IAgent {
 	private readonly _onDidChangeSessionList = this._register(new Emitter<void>());
 	readonly onDidChangeSessionList: Event<void> = this._onDidChangeSessionList.event;
 
+	private readonly _onDidRequireAuth = this._register(new Emitter<Omit<AuthRequiredParams, 'channel'>>());
+	readonly onDidRequireAuth: Event<Omit<AuthRequiredParams, 'channel'>> = this._onDidRequireAuth.event;
+
 	private readonly _env: GaggleEnv;
 	private readonly _fetch: GaggleFetchLike;
 	private readonly _memory: IGaggleMemoryBridge;
+	/** The signed-in user's SovereignDB bearer, supplied by the client. Memory only. */
+	private _sovereignDbToken: string | undefined;
+	private _authRequested = false;
 	private readonly _remoteTokenProvider: TokenProvider | undefined;
 	private readonly _hopTtlMs: number;
 	private readonly _sessionStore: GaggleSessionStore;
@@ -151,13 +159,53 @@ export class GaggleAgent extends Disposable implements IAgent {
 		};
 	}
 
+	/**
+	 * SovereignDB is OAuth-bound: the token that opens it is the signed-in user's,
+	 * and it is the client — which holds that identity — that supplies it. The
+	 * agent host never mints, stores on disk, or infers a credential; it declares
+	 * the resource and waits to be handed a bearer for it (RFC 9728 / RFC 6750,
+	 * the same path the vendor provider uses for GitHub).
+	 *
+	 * The resource is the ASSIGNED SovereignDB base URL, so a user is only ever
+	 * asked for a token covering the instance this deployment was pointed at.
+	 */
 	getProtectedResources(): ProtectedResourceMetadata[] {
-		return [];
+		const resource = sovereignDbResource(this._env);
+		return resource ? [resource] : [];
 	}
 
-	async authenticate(_resource: string, _token: string): Promise<boolean> {
-		// Goose ships no sign-in plane for this provider; credentials are assignments.
-		return false;
+	/**
+	 * Accept a bearer for a resource we declared. SovereignDB is the only one:
+	 * the SMR hop's credential is an assignment (`SMR_API_KEY`), not a user
+	 * identity. An unknown resource is refused rather than silently accepted.
+	 */
+	async authenticate(resource: string, token: string): Promise<boolean> {
+		const declared = sovereignDbResource(this._env);
+		if (!declared || resource !== declared.resource) {
+			return false;
+		}
+		const changed = this._sovereignDbToken !== token;
+		this._sovereignDbToken = token;
+		if (changed) {
+			// The bridge reads the token through a provider, so an updated token is
+			// picked up on the next call without rebuilding anything.
+			this._logService.info('gaggle memory: SovereignDB credential accepted for the signed-in user');
+		}
+		return true;
+	}
+
+	/**
+	 * Ask the client for a SovereignDB credential, once, when memory is wanted
+	 * and we hold none. The host forwards this as `auth/required`; the client
+	 * answers through {@link authenticate}.
+	 */
+	private _requireSovereignDbAuth(): void {
+		const resource = sovereignDbResource(this._env);
+		if (!resource || this._sovereignDbToken || this._authRequested) {
+			return;
+		}
+		this._authRequested = true;
+		this._onDidRequireAuth.fire({ resource: resource.resource, reason: AuthRequiredReason.Required });
 	}
 
 	// ---- hop, credential, client ------------------------------------------------------------
@@ -419,6 +467,10 @@ export class GaggleAgent extends Disposable implements IAgent {
 
 		const leadingParts: ResponsePart[] = [];
 		if (!this._memory.enabled && !state.memoryNoticeShown) {
+			// A SovereignDB IS assigned but memory is off: the missing piece is the
+			// user's own credential, so ask the client for one rather than leaving
+			// the notice as the end of the story. Fires once per agent.
+			this._requireSovereignDbAuth();
 			leadingParts.push(memoryOffNoticePart());
 			state.memoryNoticeShown = true;
 		}

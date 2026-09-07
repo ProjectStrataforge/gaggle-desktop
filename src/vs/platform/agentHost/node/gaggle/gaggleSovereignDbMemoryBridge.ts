@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { tableFromArrays, tableToIPC } from 'apache-arrow';
-import type { Client } from '@projectstrataforge/sovereign-db-sdk';
+import { Client, type ClientOptions } from '@projectstrataforge/sovereign-db-sdk';
 import type { ILogService } from '../../../log/common/log.js';
 import {
 	SOVDB_CHAT_MEMORY_ARRAY_KEY,
@@ -249,4 +249,62 @@ export function fragmentFromTurn(turn: GaggleTurnRecord, vector: number[]): Uint
 function titleOf(turn: GaggleTurnRecord): string {
 	const firstLine = turn.prompt.split(/\r?\n/, 1)[0]?.trim() ?? '';
 	return firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
+}
+
+/**
+ * The SovereignDB instance this deployment is pointed at, as an OAuth protected
+ * resource. Absent when no SovereignDB is assigned — there is nothing to ask a
+ * user to authorise, and asking anyway would be a prompt with no answer.
+ *
+ * The identifier is the assigned base URL, so the client only ever acquires a
+ * token covering the instance the user's own access already governs.
+ */
+export function sovereignDbResource(
+	env: Readonly<Record<string, string | undefined>>,
+): { resource: string; resource_name: string } | undefined {
+	if (!isSovereignDbAssigned(env)) {
+		return undefined;
+	}
+	return {
+		resource: normalizeBase(env['SOVDB_BASE_URL']!.trim()),
+		resource_name: 'SovereignDB',
+	};
+}
+
+/**
+ * Build a bridge over the real SDK from a caller-supplied token provider — the
+ * signed-in user's bearer, read fresh on every request so a refreshed token is
+ * picked up and an expired one is never cached here.
+ */
+export function createSovereignDbMemoryBridge(options: {
+	readonly env: Readonly<Record<string, string | undefined>>;
+	readonly tokenProvider: () => string | undefined;
+	readonly embedder: GaggleEmbedPort;
+	readonly logService: ILogService;
+	readonly fetch?: ClientOptions['fetch'];
+}): GaggleSovereignDbMemoryBridge | undefined {
+	const resource = sovereignDbResource(options.env);
+	if (!resource) {
+		return undefined;
+	}
+	const client = new Client({
+		baseUrl: resource.resource,
+		// Per request, never stored: the SDK asks each time it opens a call.
+		tokenProvider: () => {
+			const token = options.tokenProvider();
+			if (!token) {
+				// The SDK turns an empty token into a typed authentication error,
+				// which the bridge already degrades to "no memory this turn".
+				throw new Error('no SovereignDB credential');
+			}
+			return token;
+		},
+		...(options.fetch ? { fetch: options.fetch } : {}),
+	});
+	return new GaggleSovereignDbMemoryBridge({
+		env: options.env,
+		client,
+		embedder: options.embedder,
+		logService: options.logService,
+	});
 }

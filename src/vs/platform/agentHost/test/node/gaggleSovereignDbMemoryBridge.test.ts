@@ -12,6 +12,7 @@ import {
 	classifyMemoryDestination,
 	fragmentFromTurn,
 	piiExternalApproved,
+	sovereignDbResource,
 	type GaggleEmbedPort,
 	type GaggleMemoryClient,
 } from '../../node/gaggle/gaggleSovereignDbMemoryBridge.js';
@@ -73,6 +74,17 @@ function bridge(options: {
 
 suite('Gaggle SovereignDB memory bridge (114 US3)', () => {
 	ensureNoDisposablesAreLeakedInTestSuite();
+
+	test('declares the ASSIGNED SovereignDB as an OAuth protected resource, and nothing when none is assigned', () => {
+		assert.deepStrictEqual(sovereignDbResource({ SOVDB_BASE_URL: `${BASE}/` }), {
+			resource: BASE,
+			resource_name: 'SovereignDB',
+		});
+		assert.deepStrictEqual(
+			[sovereignDbResource({}), sovereignDbResource({ SOVDB_BASE_URL: '   ' })],
+			[undefined, undefined],
+		);
+	});
 
 	test('is off, and writes nothing, when no SovereignDB is assigned', async () => {
 		const client = fakeClient();
