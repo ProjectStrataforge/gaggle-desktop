@@ -35,9 +35,7 @@ import { InstantiationService } from '../../instantiation/common/instantiationSe
 import { ServiceCollection } from '../../instantiation/common/serviceCollection.js';
 import { registerAgentHostNetworkServices } from './agentHostBootstrap.js';
 import { BANG_COMMAND_PREFIX } from './agentHostBangCommand.js';
-import { CopilotAgent, copilotCliResolvable } from './copilot/copilotAgent.js';
 import { GaggleAgent } from './gaggle/gaggleAgent.js';
-import { getAppNodeModulesPath } from './appNodeModules.js';
 import { INetworkDiagnosticsService, NetworkDiagnosticsService } from './networkDiagnosticsService.js';
 import { IByokLmBridgeRegistry, NullByokLmBridgeRegistry } from './byokLmBridgeRegistry.js';
 import { IByokLmProxyService, NullByokLmProxyService } from './copilot/byokLmProxyService.js';
@@ -67,7 +65,7 @@ import { AgentHostClientConnectionTelemetryTracker } from './agentHostClientConn
 import { FileService } from '../../files/common/fileService.js';
 import { IFileService } from '../../files/common/files.js';
 import { DiskFileSystemProvider } from '../../files/node/diskFileSystemProvider.js';
-import { FileAccess, Schemas } from '../../../base/common/network.js';
+import { Schemas } from '../../../base/common/network.js';
 import { ISessionDataService } from '../common/sessionDataService.js';
 import { IDiffComputeService } from '../common/diffComputeService.js';
 import { IAgentEditAttributionService } from '../common/fileEditAttribution.js';
@@ -320,15 +318,9 @@ async function main(): Promise<void> {
 		// to satisfy CopilotAgent / CopilotSessionLauncher DI.
 		diServices.set(IByokLmBridgeRegistry, new NullByokLmBridgeRegistry());
 		diServices.set(IByokLmProxyService, new NullByokLmProxyService());
-		// Gaggle 114 (provider honesty): see agentHostMain — a stripped Copilot CLI
-		// means no Copilot provider in built products; dev builds keep it.
-		if (!environmentService.isBuilt || copilotCliResolvable(FileAccess.asFileUri(getAppNodeModulesPath()))) {
-			const copilotAgent = disposables.add(instantiationService.createInstance(CopilotAgent));
-			agentService.registerProvider(copilotAgent);
-			log('CopilotAgent registered');
-		} else {
-			log('CopilotAgent not registered: its CLI does not resolve in this built product (Gaggle 114)');
-		}
+		// Gaggle 114: see agentHostMain — Goose ships one provider and it routes
+		// through the SMR. The Copilot provider is registered in no build.
+		log('CopilotAgent not registered: Goose routes every generative call through the SMR (Gaggle 114)');
 		// Gaggle 114: the Goose agent — the SMR SDK for every generative call
 		// (Principle I), SovereignDB for memory (Principle II).
 		const gaggleAgent = disposables.add(instantiationService.createInstance(GaggleAgent, undefined));
