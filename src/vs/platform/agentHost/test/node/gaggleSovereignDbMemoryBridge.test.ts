@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import assert from 'assert';
+import { tableFromIPC } from 'apache-arrow';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
 import { NullLogService } from '../../../log/common/log.js';
 import {
@@ -186,17 +187,32 @@ suite('Gaggle SovereignDB memory bridge (114 US3)', () => {
 		await down.capture(turn());
 	});
 
-	test('the fragment carries metadata and the reply, keyed by the turn', () => {
+	test('the fragment carries the DIMENSION column and a FixedSizeList vector', () => {
+		// Both learned from a live SovereignDB, and both were missing before it was
+		// run: a fragment without the array's dimension column is refused, and the
+		// vector must be FixedSizeList<Float32>[width] — `tableFromArrays` builds a
+		// List from a nested array, which is a different type and is refused.
 		const bytes = fragmentFromTurn(turn(), [0.1, 0.2, 0.3, 0.4]);
-		const text = new TextDecoder().decode(bytes);
-		assert.deepStrictEqual(
-			[
-				bytes.byteLength > 0,
-				text.includes('session_id'),
-				text.includes('captured_at'),
-				text.includes('embedding'),
-			],
-			[true, true, true, true],
-		);
+		const table = tableFromIPC(bytes);
+		const byName = Object.fromEntries(table.schema.fields.map(f => [f.name, String(f.type)]));
+		assert.deepStrictEqual(byName, {
+			x: 'Int32',
+			embedding: 'FixedSizeList[4]<Float32>',
+			session_id: 'Utf8',
+			title: 'Utf8',
+			snippet: 'Utf8',
+			source: 'Utf8',
+			captured_at: 'Int64',
+		});
+		assert.strictEqual(table.numRows, 1);
+	});
+
+	test('the same turn always lands on the same coordinate', () => {
+		const a = tableFromIPC(fragmentFromTurn(turn(), [0.1])).getChild('x')?.get(0);
+		const b = tableFromIPC(fragmentFromTurn(turn(), [0.9])).getChild('x')?.get(0);
+		const other = tableFromIPC(fragmentFromTurn(turn({ turnId: 'turn-2' }), [0.1])).getChild('x')?.get(0);
+		assert.strictEqual(a, b, 'a re-captured turn must not grow the array');
+		assert.notStrictEqual(a, other, 'different turns must not collide');
+		assert.ok(typeof a === 'number' && a >= 0 && a < 10_000_000, `coordinate ${a} is outside the array domain`);
 	});
 });

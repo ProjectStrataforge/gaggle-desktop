@@ -3,8 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { tableFromArrays, tableToIPC } from 'apache-arrow';
-import { Client, type ClientOptions } from '@projectstrataforge/sovereign-db-sdk';
+import { Field, FixedSizeList, Float32, Table, Utf8, makeData, makeVector, tableToIPC, vectorFromArray } from 'apache-arrow';
+import { Client } from '@projectstrataforge/sovereign-db-sdk';
 import type { ILogService } from '../../../log/common/log.js';
 import {
 	SOVDB_CHAT_MEMORY_ARRAY_KEY,
@@ -228,21 +228,56 @@ function describe(error: unknown): string {
 }
 
 /**
- * One turn as an Arrow IPC stream, in the flat scalar shape Gaggle's own
- * `sovdb-rag/src/arrow.ts` writes: utf8 strings and an epoch-ms int64, plus the
- * fixed-arity Float32 vector the similarity read matches on.
+ * One turn as an Arrow IPC stream, in the shape a sparse chat-memory array
+ * actually accepts. Proven against a live SovereignDB, which is where both of
+ * these were learned:
+ *
+ *   - the array's DIMENSION column must be present (`x`), not just its
+ *     attributes — a fragment without it is refused;
+ *   - the vector column must be `FixedSizeList<Float32>[width]`. Arrow's
+ *     `tableFromArrays` builds a `List` from a nested array, which is a
+ *     different type and is refused.
+ *
+ * The array is created with `x: int32` and the attributes below; see
+ * `docs/desktop/fork-bootstrap.md` for the create body.
  */
 export function fragmentFromTurn(turn: GaggleTurnRecord, vector: number[]): Uint8Array {
 	const startedAtMs = Date.parse(turn.startedAt);
-	const table = tableFromArrays({
-		session_id: [turn.turnId],
-		title: [titleOf(turn)],
-		snippet: [turn.replyMarkdown],
-		source: [turn.attribution ? `${turn.attribution.hop}:${turn.attribution.servedModel}` : 'unattributed'],
-		captured_at: [BigInt(Number.isNaN(startedAtMs) ? 0 : startedAtMs)],
-		[DEFAULT_VECTOR_ATTRIBUTE]: [Float32Array.from(vector)],
+	const table = new Table({
+		// A stable coordinate per turn: the same turn re-captured lands on the same
+		// cell rather than growing the array with a duplicate.
+		x: makeVector(Int32Array.from([coordinateOf(turn.turnId)])),
+		embedding: fixedSizeListColumn([Float32Array.from(vector)]),
+		session_id: vectorFromArray([turn.turnId], new Utf8()),
+		title: vectorFromArray([titleOf(turn)], new Utf8()),
+		snippet: vectorFromArray([turn.replyMarkdown], new Utf8()),
+		source: vectorFromArray([turn.attribution ? `${turn.attribution.hop}:${turn.attribution.servedModel}` : 'unattributed'], new Utf8()),
+		captured_at: makeVector(BigInt64Array.from([BigInt(Number.isNaN(startedAtMs) ? 0 : startedAtMs)])),
 	});
 	return tableToIPC(table, 'stream');
+}
+
+/** A `FixedSizeList<Float32>[width]` column — the only vector shape the engine accepts. */
+function fixedSizeListColumn(vectors: readonly Float32Array[]): ReturnType<typeof makeVector> {
+	const width = vectors[0]?.length ?? 0;
+	const flat = new Float32Array(width * vectors.length);
+	vectors.forEach((v, i) => flat.set(v, i * width));
+	const child = makeVector(flat);
+	const type = new FixedSizeList(width, new Field('item', new Float32(), false));
+	return makeVector(makeData({ type, length: vectors.length, nullCount: 0, child: child.data[0] }));
+}
+
+/**
+ * A stable non-negative int32 coordinate for a turn id (FNV-1a, 31 bits). The
+ * array's domain is `0..10_000_000`, so it is taken modulo that.
+ */
+function coordinateOf(turnId: string): number {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < turnId.length; i += 1) {
+		hash ^= turnId.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return (hash >>> 1) % 10_000_000;
 }
 
 /** A short, prompt-derived label. Kept to one line so a row stays scannable. */
@@ -281,7 +316,6 @@ export function createSovereignDbMemoryBridge(options: {
 	readonly tokenProvider: () => string | undefined;
 	readonly embedder: GaggleEmbedPort;
 	readonly logService: ILogService;
-	readonly fetch?: ClientOptions['fetch'];
 }): GaggleSovereignDbMemoryBridge | undefined {
 	const resource = sovereignDbResource(options.env);
 	if (!resource) {
@@ -293,13 +327,12 @@ export function createSovereignDbMemoryBridge(options: {
 		tokenProvider: () => {
 			const token = options.tokenProvider();
 			if (!token) {
-				// The SDK turns an empty token into a typed authentication error,
-				// which the bridge already degrades to "no memory this turn".
+				// The SDK turns this into a typed authentication error, which the
+				// bridge already degrades to "no memory this turn".
 				throw new Error('no SovereignDB credential');
 			}
 			return token;
 		},
-		...(options.fetch ? { fetch: options.fetch } : {}),
 	});
 	return new GaggleSovereignDbMemoryBridge({
 		env: options.env,
