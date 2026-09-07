@@ -17,6 +17,7 @@ import { ILifecycleMainService } from '../../lifecycle/electron-main/lifecycleMa
 import { ILogService } from '../../log/common/log.js';
 import { Schemas } from '../../../base/common/network.js';
 import { getResolvedShellEnv } from '../../shell/node/shellEnv.js';
+import { refreshWindowsAgentHostEnv } from '../node/gaggle/gaggleWindowsEnv.js';
 import { NullTelemetryService } from '../../telemetry/common/telemetryUtils.js';
 import { UtilityProcess } from '../../utilityProcess/electron-main/utilityProcess.js';
 import { IAgentHostConnection, IAgentHostStarter } from '../common/agent.js';
@@ -159,6 +160,34 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 		// recomputing them live (which can diverge). See `agentHostTelemetryEnv`.
 		const telemetryIdEnv = buildAgentHostTelemetryIdEnv(this._telemetryIds);
 
+		// Gaggle 118 — Windows parity for the environment above. `shellEnv` is
+		// the macOS/Linux answer to a GUI launch inheriting a stale environment;
+		// on Windows it returns {} by design, so a launching process that predates
+		// the operator's assignments leaves the agent host without its endpoint,
+		// or holding a credential that was rotated away. Re-read the named set the
+		// agent host actually consumes, AFTER shellEnv so the OS-assigned value
+		// wins exactly as it already does on the other platforms.
+		//
+		// It can only replace a value with the one the OS holds: absent, empty and
+		// unreadable all leave the inherited value alone, and any failure returns
+		// the input unchanged. Key names are traced, never a value or a length.
+		const composedEnv = {
+			...deepClone(process.env),
+			...shellEnv,
+		};
+		const assigned = await refreshWindowsAgentHostEnv(composedEnv, {
+			// Lazy and Windows-only, the shape `src/vs/base/node/id.ts` uses. It
+			// lives here rather than beside the logic because the 114 Principle I
+			// guard keeps `node/gaggle` free of scoped packages.
+			loadReader: async () => {
+				const registry = await import('@vscode/windows-registry');
+				return (hive, path, name) => registry.GetStringRegKey(hive, path, name);
+			},
+		});
+		if (assigned.refreshed.length > 0) {
+			this._logService.trace(`agent host: refreshed assigned environment for ${assigned.refreshed.join(', ')}`);
+		}
+
 		this.utilityProcess.start({
 			type: 'agentHost',
 			name: 'agent-host',
@@ -166,8 +195,7 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 			execArgv,
 			args,
 			env: {
-				...deepClone(process.env),
-				...shellEnv,
+				...assigned.env,
 				// Announce that everything spawned below this process is driven by
 				// VS Code's agent, so `gh` inherits it. Set after the inherited
 				// env so it wins.

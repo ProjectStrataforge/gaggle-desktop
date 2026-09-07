@@ -80,6 +80,10 @@ suite('Gaggle SovereignDB memory bridge (114 US3)', () => {
 		assert.deepStrictEqual(sovereignDbResource({ SOVDB_BASE_URL: `${BASE}/` }), {
 			resource: BASE,
 			resource_name: 'SovereignDB',
+			// 116: memory is BEST EFFORT. A client treats an absent `required` as
+			// true and refuses createSession for a resource it cannot authenticate,
+			// which made every session fail wherever SOVDB_BASE_URL was assigned.
+			required: false,
 		});
 		assert.deepStrictEqual(
 			[sovereignDbResource({}), sovereignDbResource({ SOVDB_BASE_URL: '   ' })],
