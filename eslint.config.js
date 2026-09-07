@@ -1688,7 +1688,7 @@ export default defineConfig(
 						'zod', // used by agentHost for Claude client-tool MCP input schemas
 						'@projectstrataforge/sovereign-router-sdk', // Gaggle 114: the SMR client — the only generative egress of the Gaggle provider (Principle I)
 						'@projectstrataforge/sovereign-db-sdk', // Gaggle 114 / sovereign-db 1030: SovereignDB memory for the Gaggle provider (Principle II)
-						'apache-arrow' // Gaggle 114 US3: a fragment write is Arrow IPC, so the bridge encodes one. The SDK decodes reads for you but takes bytes for writes.
+						'apache-arrow' // Gaggle 114 US3: the SDK's `encodeFragment` builds the write bytes now, so no source file imports Arrow — the bridge's test still decodes them to pin the fragment schema.
 					]
 				},
 				{

@@ -3,8 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Field, FixedSizeList, Float32, Table, Utf8, makeData, makeVector, tableToIPC, vectorFromArray } from 'apache-arrow';
-import { Client } from '@projectstrataforge/sovereign-db-sdk';
+import { Client, encodeFragment } from '@projectstrataforge/sovereign-db-sdk';
 import type { ILogService } from '../../../log/common/log.js';
 import {
 	SOVDB_CHAT_MEMORY_ARRAY_KEY,
@@ -229,42 +228,32 @@ function describe(error: unknown): string {
 
 /**
  * One turn as an Arrow IPC stream, in the shape a sparse chat-memory array
- * actually accepts. Proven against a live SovereignDB, which is where both of
- * these were learned:
- *
- *   - the array's DIMENSION column must be present (`x`), not just its
- *     attributes — a fragment without it is refused;
- *   - the vector column must be `FixedSizeList<Float32>[width]`. Arrow's
- *     `tableFromArrays` builds a `List` from a nested array, which is a
- *     different type and is refused.
+ * actually accepts. Two rules govern that shape, and both now belong to the
+ * SDK: `encodeFragment` takes the array's DIMENSION columns structurally — a
+ * fragment of attributes alone cannot be expressed — and encodes a `vector`
+ * attribute as `FixedSizeList<Float32>[width]` rather than the variable-length
+ * `List` Arrow infers from a nested array. Both were learned here against a
+ * live SovereignDB; sovereign-db 1031 moved them to the one place every writing
+ * consumer meets them, as a local `ValidationError` before anything is sent.
  *
  * The array is created with `x: int32` and the attributes below; see
  * `docs/desktop/fork-bootstrap.md` for the create body.
  */
 export function fragmentFromTurn(turn: GaggleTurnRecord, vector: number[]): Uint8Array {
 	const startedAtMs = Date.parse(turn.startedAt);
-	const table = new Table({
+	return encodeFragment({
 		// A stable coordinate per turn: the same turn re-captured lands on the same
 		// cell rather than growing the array with a duplicate.
-		x: makeVector(Int32Array.from([coordinateOf(turn.turnId)])),
-		embedding: fixedSizeListColumn([Float32Array.from(vector)]),
-		session_id: vectorFromArray([turn.turnId], new Utf8()),
-		title: vectorFromArray([titleOf(turn)], new Utf8()),
-		snippet: vectorFromArray([turn.replyMarkdown], new Utf8()),
-		source: vectorFromArray([turn.attribution ? `${turn.attribution.hop}:${turn.attribution.servedModel}` : 'unattributed'], new Utf8()),
-		captured_at: makeVector(BigInt64Array.from([BigInt(Number.isNaN(startedAtMs) ? 0 : startedAtMs)])),
+		dimensions: { x: { type: 'int32', values: [coordinateOf(turn.turnId)] } },
+		attributes: {
+			embedding: { type: 'vector', values: [vector], width: vector.length },
+			session_id: { type: 'utf8', values: [turn.turnId] },
+			title: { type: 'utf8', values: [titleOf(turn)] },
+			snippet: { type: 'utf8', values: [turn.replyMarkdown] },
+			source: { type: 'utf8', values: [turn.attribution ? `${turn.attribution.hop}:${turn.attribution.servedModel}` : 'unattributed'] },
+			captured_at: { type: 'int64', values: [Number.isNaN(startedAtMs) ? 0 : startedAtMs] },
+		},
 	});
-	return tableToIPC(table, 'stream');
-}
-
-/** A `FixedSizeList<Float32>[width]` column — the only vector shape the engine accepts. */
-function fixedSizeListColumn(vectors: readonly Float32Array[]): ReturnType<typeof makeVector> {
-	const width = vectors[0]?.length ?? 0;
-	const flat = new Float32Array(width * vectors.length);
-	vectors.forEach((v, i) => flat.set(v, i * width));
-	const child = makeVector(flat);
-	const type = new FixedSizeList(width, new Field('item', new Float32(), false));
-	return makeVector(makeData({ type, length: vectors.length, nullCount: 0, child: child.data[0] }));
 }
 
 /**
