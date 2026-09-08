@@ -355,13 +355,54 @@ export class GaggleAgent extends Disposable implements IAgent {
 		return client;
 	}
 
-	async refreshModels(): Promise<void> {
-		const resolution = await this._resolveHop(true);
+	/**
+	 * 121 fixit: `preference` names the plane whose catalogue to read.
+	 *
+	 * Without it this always resolved the DEFAULT hop, so an operator who chose
+	 * `prod` kept seeing the local plane's models — reported 2026-09-08 as
+	 * "I didn't see upstream models". The catalogue must follow the chosen plane,
+	 * not merely the reachable one.
+	 */
+	async refreshModels(preference?: string): Promise<void> {
+		const resolution = await this._resolveHop(true, preference);
 		if (!resolution.ok) {
 			await this._catalog.refresh(undefined, undefined);
 			return;
 		}
 		await this._catalog.refresh(this._clientFor(resolution.hop), resolution.hop.kind);
+	}
+
+	/**
+	 * 121 fixit: a client-originated session-config change.
+	 *
+	 * `smrPlane` is declared `sessionMutable`, so the picker rendered and let the
+	 * operator choose — and nothing wrote the choice anywhere. `hopProfile` was
+	 * only ever set in `createSession`, so an existing session kept resolving
+	 * local-first and every turn logged `hop=local` under a picker reading
+	 * `prod`. That is precisely the silent substitution [121] exists to remove,
+	 * and no unit test caught it because they all called `resolveHop` with the
+	 * preference already in hand.
+	 */
+	onSessionConfigChanged(session: URI, values: Record<string, unknown>): void {
+		void this._applyHopProfile(session, hopProfileFromConfig({ config: values }));
+	}
+
+	private async _applyHopProfile(session: URI, profile: string | undefined): Promise<void> {
+		try {
+			const state = await this._state(session);
+			if (state.record.hopProfile === profile) {
+				return;
+			}
+			state.record = (await this._sessionStore.update(state.session, { hopProfile: profile }))
+				?? { ...state.record, hopProfile: profile };
+			// A plane name, never a URL — the same rule the options list follows.
+			this._logService.info(`gaggle hop: session ${AgentSession.id(state.session)} targets ${profile ?? 'the default (local-first)'}`);
+			await this.refreshModels(profile);
+		} catch (err) {
+			// A failed config change must not take the session down with it; the
+			// next turn still resolves, and the log says why the choice did not land.
+			this._logService.warn(`gaggle hop: could not apply the chosen plane: ${err instanceof Error ? err.message : String(err)}`);
+		}
 	}
 
 	// ---- sessions ---------------------------------------------------------------------------

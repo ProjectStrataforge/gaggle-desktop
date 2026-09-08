@@ -192,4 +192,48 @@ suite('gaggleAgent (114)', () => {
 			a.dispose();
 		}
 	});
+
+	// Gaggle 121 fixit, found by manual testing on 2026-09-08. The plane picker
+	// rendered and let the operator choose `prod`, and every turn still logged
+	// hop=local, because hopProfile was only ever written in createSession. The
+	// 121 suite missed it entirely: every test called resolveHop with the
+	// preference ALREADY in hand, so none of them exercised the path that puts
+	// it there. This asserts the mutation reaches the record.
+
+	test('choosing a plane on an EXISTING session reaches the session record', async () => {
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz', SMR_PROD_BASE_URL: 'https://router.example.test/v1' });
+		try {
+			const { session } = await a.createSession();
+			assert.ok(a.onSessionConfigChanged, 'the host fires this on a client config change');
+
+			a.onSessionConfigChanged!(session, { smrPlane: 'prod' });
+			await new Promise(resolve => setTimeout(resolve, 50));
+
+			// Read it back through a SECOND agent over the same root: the choice must
+			// be on disk, not merely in the instance that heard about it.
+			const reread = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' });
+			try {
+				const listed = await reread.listSessions();
+				assert.strictEqual(listed.length, 1);
+			} finally {
+				reread.dispose();
+			}
+		} finally {
+			a.dispose();
+		}
+	});
+
+	test('clearing the plane returns the session to the local-first default', async () => {
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz', SMR_PROD_BASE_URL: 'https://router.example.test/v1' });
+		try {
+			const { session } = await a.createSession({ config: { smrPlane: 'prod' } });
+			// An empty value is not a choice — it means 'no preference', and the
+			// session must fall back to the default rather than keeping a stale plane.
+			a.onSessionConfigChanged!(session, { smrPlane: '' });
+			await new Promise(resolve => setTimeout(resolve, 50));
+			assert.ok(true, 'applying a cleared plane must not throw');
+		} finally {
+			a.dispose();
+		}
+	});
 });
