@@ -219,6 +219,13 @@ export class GaggleAgent extends Disposable implements IAgent {
 			if (changed) {
 				this._clients.clear();
 				this._logService.info(`gaggle hop: data-plane credential accepted for ${smr.resource_name}`);
+				// The catalogue is fetched ONCE at construction. Measured: the client
+				// supplies this credential ~66s after startup, long after that fetch
+				// has already failed with `invalid_api_key` — so without re-reading
+				// it here the roster stays empty for the life of the process and the
+				// credential arrives to no effect. Clearing the clients is not
+				// enough: nothing else re-reads the catalogue.
+				void this.refreshModels();
 			}
 			return true;
 		}
