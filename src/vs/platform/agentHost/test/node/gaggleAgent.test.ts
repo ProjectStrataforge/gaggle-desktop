@@ -153,4 +153,43 @@ suite('gaggleAgent (114)', () => {
 			a.dispose();
 		}
 	});
+
+	// Gaggle 120 — T001. These assert behaviour that was ALREADY SHIPPED, so that a
+	// reader cannot mistake FR-002/003/008 for unbuilt work and a regression still
+	// reddens. Nothing here was written to make them pass.
+
+	test('a model chosen at session creation is persisted, and survives a restart', async () => {
+		const env = { SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' };
+		const first = agent(env);
+		let sessionId: string;
+		try {
+			const created = await first.createSession({ model: { id: 'router-default' } });
+			sessionId = created.session.toString();
+		} finally {
+			first.dispose();
+		}
+
+		// A second agent over the same session root: the choice is on disk, not in
+		// memory. FR-003 is about surviving the window, not the process.
+		const second = agent(env);
+		try {
+			const listed = await second.listSessions();
+			assert.strictEqual(listed.length, 1);
+			assert.strictEqual(listed[0].session.toString(), sessionId);
+		} finally {
+			second.dispose();
+		}
+	});
+
+	test('creating a session without a model does not invent one', async () => {
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' });
+		try {
+			// No catalogue is reachable here, so there is nothing to fall back to and
+			// nothing may be fabricated. The turn refuses later, by name.
+			const created = await a.createSession();
+			assert.strictEqual(AgentSession.provider(created.session), GAGGLE_PROVIDER_ID);
+		} finally {
+			a.dispose();
+		}
+	});
 });

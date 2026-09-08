@@ -583,7 +583,11 @@ export class GaggleAgent extends Disposable implements IAgent {
 		if (this._catalog.snapshot().length === 0) {
 			await this._catalog.refresh(client, hop.kind);
 		}
-		const model = state.record.modelId ?? this._catalog.snapshot()[0]?.id;
+		// 120: `auto` resolves through the measured-real rule; any other id is
+		// itself. What comes back is what the turn RECORDS — never the word
+		// `auto`, because `hop=… model=… latency_ms=…` is the evidence trail that
+		// made this class of problem diagnosable (FR-005).
+		const model = this._catalog.resolveModelId(state.record.modelId);
 		if (!model) {
 			throw new Error(gaggleCopy.hopUnreachable(hop.kind));
 		}

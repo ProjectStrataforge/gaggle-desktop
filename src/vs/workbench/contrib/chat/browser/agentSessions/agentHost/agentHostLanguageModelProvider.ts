@@ -31,7 +31,13 @@ import { ILanguageModelChatMetadata, ILanguageModelChatMetadataAndIdentifier, IL
  * agent declares its own value instead of this allow-list living in core.
  */
 export function agentHostProviderSupportsAutoModel(provider: string): boolean {
-	return provider === 'copilotcli';
+	// Gaggle 120: `gaggle` routes through the Sovereign Model Router, whose whole
+	// premise is that the router picks. Without this the routing profile is never
+	// promoted and sits behind "Other Models", which is where operators stopped
+	// looking. Literal rather than an import: this file is `browser`, the id lives
+	// in `node/gaggle/gaggleTypes.ts`, and a cross-layer import would be a
+	// `valid-layers-check` failure. Same idiom as `copilotcli` above.
+	return provider === 'copilotcli' || provider === 'gaggle';
 }
 
 /**

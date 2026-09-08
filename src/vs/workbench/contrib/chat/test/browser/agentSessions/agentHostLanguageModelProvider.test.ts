@@ -8,7 +8,7 @@ import { CancellationToken } from '../../../../../../base/common/cancellation.js
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../../base/test/common/utils.js';
 import { SessionModelInfo } from '../../../../../../platform/agentHost/common/state/sessionState.js';
 import { ILanguageModelChatMetadata } from '../../../common/languageModels.js';
-import { AgentHostLanguageModelProvider } from '../../../browser/agentSessions/agentHost/agentHostLanguageModelProvider.js';
+import { AgentHostLanguageModelProvider, agentHostProviderSupportsAutoModel } from '../../../browser/agentSessions/agentHost/agentHostLanguageModelProvider.js';
 
 suite('AgentHostLanguageModelProvider', () => {
 	const store = ensureNoDisposablesAreLeakedInTestSuite();
@@ -217,6 +217,22 @@ suite('AgentHostLanguageModelProvider', () => {
 			grouped: { byokModelIdentifier: 'openrouter/OpenRouter 2/aion-labs/aion-3.0', manageModelsId: 'openrouter/OpenRouter 2/aion-labs/aion-3.0' },
 			groupless: { byokModelIdentifier: 'anthropic/claude-sonnet-4', manageModelsId: 'anthropic/claude-sonnet-4' },
 			native: { byokModelIdentifier: undefined, manageModelsId: undefined },
+		});
+	});
+
+	suite('Gaggle 120 — which providers expose an Auto model', () => {
+
+		test('gaggle exposes Auto, because the router picking IS the product', () => {
+			// Without this the routing profile is never promoted and sits behind
+			// "Other Models", which is where operators stopped looking.
+			assert.strictEqual(agentHostProviderSupportsAutoModel('gaggle'), true);
+		});
+
+		test('every other provider is unchanged — this predicate is shared', () => {
+			assert.strictEqual(agentHostProviderSupportsAutoModel('copilotcli'), true);
+			assert.strictEqual(agentHostProviderSupportsAutoModel('claude'), false);
+			assert.strictEqual(agentHostProviderSupportsAutoModel('codex'), false);
+			assert.strictEqual(agentHostProviderSupportsAutoModel(''), false);
 		});
 	});
 });

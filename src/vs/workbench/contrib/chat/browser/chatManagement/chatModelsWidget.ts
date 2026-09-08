@@ -30,7 +30,7 @@ import { Link } from '../../../../../platform/opener/browser/link.js';
 import { SuggestEnabledInput } from '../../../codeEditor/browser/suggestEnabledInput/suggestEnabledInput.js';
 import { Delayer } from '../../../../../base/common/async.js';
 import { settingsTextInputBorder } from '../../../preferences/common/settingsEditorColorRegistry.js';
-import { IChatEntitlementService, ChatEntitlement } from '../../../../services/chat/common/chatEntitlementService.js';
+import { IChatEntitlementService } from '../../../../services/chat/common/chatEntitlementService.js';
 import { DropdownMenuActionViewItem } from '../../../../../base/browser/ui/dropdown/dropdownActionViewItem.js';
 import { IActionViewItemOptions } from '../../../../../base/browser/ui/actionbar/actionViewItems.js';
 import { AnchorAlignment } from '../../../../../base/browser/ui/contextview/contextview.js';
@@ -49,8 +49,6 @@ import { IWorkbenchEnvironmentService } from '../../../../services/environment/c
 import Severity from '../../../../../base/common/severity.js';
 import { IJSONSchema } from '../../../../../base/common/jsonSchema.js';
 import { formatTokenCount } from '../../../../../base/common/numbers.js';
-import { IDefaultAccountService } from '../../../../../platform/defaultAccount/common/defaultAccount.js';
-import { CHAT_SETUP_ACTION_ID } from '../actions/chatActions.js';
 
 const $ = DOM.$;
 
@@ -1145,7 +1143,6 @@ export class ChatModelsWidget extends Disposable {
 	private addButtonContainer!: HTMLElement;
 	private addButton!: Button;
 	private dropdownActions: IAction[] = [];
-	private defaultAccountResolved = false;
 	private viewModel: ChatModelsViewModel;
 	private delayedFiltering: Delayer<void>;
 
@@ -1166,7 +1163,6 @@ export class ChatModelsWidget extends Disposable {
 		@IDialogService private readonly dialogService: IDialogService,
 		@IExtensionsWorkbenchService private readonly extensionsWorkbenchService: IExtensionsWorkbenchService,
 		@IWorkbenchEnvironmentService private readonly environmentService: IWorkbenchEnvironmentService,
-		@IDefaultAccountService private readonly defaultAccountService: IDefaultAccountService,
 	) {
 		super();
 
@@ -1175,16 +1171,10 @@ export class ChatModelsWidget extends Disposable {
 		this.viewModel = this._register(this.instantiationService.createInstance(ChatModelsViewModel));
 		this.element = DOM.$('.models-widget');
 		this.create(this.element);
-		this._register(this.defaultAccountService.onDidChangeDefaultAccount(() => {
-			this.defaultAccountResolved = true;
-			this.updateAddModelsButton();
-		}));
-		this.defaultAccountService.getDefaultAccount().then(() => {
-			if (!this._store.isDisposed) {
-				this.defaultAccountResolved = true;
-				this.updateAddModelsButton();
-			}
-		});
+		// Gaggle 120: the Add Models button no longer depends on whether a GitHub
+		// default account has resolved — it offers nothing in either case — so the
+		// listener and the eager `getDefaultAccount()` that existed only to re-render
+		// it are gone with it.
 
 		const loadingPromise = this.extensionService.whenInstalledExtensionsRegistered().then(() => this.viewModel.refresh());
 		this.editorProgressService.showWhile(loadingPromise, 300);
@@ -1644,27 +1634,18 @@ export class ChatModelsWidget extends Disposable {
 	}
 
 	private updateAddModelsButton(): void {
-		const configurableVendors = this.languageModelsService.getVendors().filter(vendor => vendor.managementCommand || vendor.configuration);
-
-		const entitlement = this.chatEntitlementService.entitlement;
-		const isManagedEntitlement = entitlement === ChatEntitlement.Business || entitlement === ChatEntitlement.Enterprise;
-		const supportsAddingModels = this.chatEntitlementService.isInternal
-			|| this.chatEntitlementService.clientByokEnabled
-			|| (entitlement !== ChatEntitlement.Unknown
-				&& entitlement !== ChatEntitlement.Available
-				&& !isManagedEntitlement);
-
-		this.dropdownActions = buildAddModelsDropdownActions(
-			configurableVendors,
-			supportsAddingModels,
-			vendor => this.addModelsForVendor(vendor),
-			this.defaultAccountResolved && this.defaultAccountService.currentDefaultAccount === null
-				? () => this.commandService.executeCommand(CHAT_SETUP_ACTION_ID)
-				: undefined,
-		);
-
-		this.addButton.enabled = this.dropdownActions.length > 0;
-		this.addButton.setTitle(!supportsAddingModels && isManagedEntitlement ? localize('models.managedByOrganization', "Adding models is managed by your organization") : '');
+		// Gaggle 120 — Principle I: every generative call goes through the Sovereign
+		// Model Router. This dropdown offered GitHub Copilot plus the BYOK vendors
+		// (Ollama, "OpenAI Compatible", and Custom Endpoint — the last a working exit
+		// from the SMR path that the operator fills in themselves). None of them may
+		// be offered here.
+		//
+		// There is no "add models from SMR" counterpart on purpose: models are not
+		// added to a router from the client. The plane advertises what it has and
+		// the catalogue follows the hop, so the button explains that instead.
+		this.dropdownActions = [];
+		this.addButton.enabled = false;
+		this.addButton.setTitle(localize('models.gaggleCatalogueIsAssigned', "Models come from the assigned Sovereign Model Router. There is nothing to add here."));
 	}
 
 	private async openLanguageModelProviderExtensionsSearch(): Promise<void> {
@@ -1681,11 +1662,6 @@ export class ChatModelsWidget extends Disposable {
 		this.delayedFiltering.trigger(() => {
 			this.viewModel.filter(this.searchWidget.getValue());
 		});
-	}
-
-	private async addModelsForVendor(vendor: ILanguageModelProviderDescriptor): Promise<void> {
-		await this.languageModelsService.configureLanguageModelsProviderGroup(vendor.vendor);
-		await this.viewModel.refresh();
 	}
 
 	public layout(height: number, width: number): void {
