@@ -102,6 +102,8 @@ export const GAGGLE_HOP_CONFIG_KEY = 'smrPlane';
 
 const HISTORY_TURNS = 20;
 const LOCAL_PROBE_TIMEOUT_MS = 2000;
+/** #1409: the pause before the single retry that stops one lost probe deciding the session. */
+const PROBE_RETRY_DELAY_MS = 250;
 const REMOTE_PROBE_TIMEOUT_MS = 5000;
 
 function defaultFetch(): GaggleFetchLike {
@@ -281,10 +283,34 @@ export class GaggleAgent extends Disposable implements IAgent {
 				clearTimeout(timer);
 			}
 		};
+		/* #1409: one lost probe must not decide the whole session.
+		 *
+		 * Measured 2026-09-07 — two launches minutes apart, same binary, same
+		 * environment, same router (`/healthz` in 3ms, container up 6 hours):
+		 *
+		 *   20:30:23  gaggle hop: none (local_down_cloud_disallowed)
+		 *   20:31:56  gaggle hop: local (local, probe=ok)
+		 *
+		 * The verdict is cached for the session, so a single 2s timeout during a
+		 * cold start left an empty roster with relaunch as the only remedy —
+		 * indistinguishable, to the operator, from a genuinely dead router.
+		 *
+		 * A retry costs one extra probe on a plane that really is down, and removes
+		 * a whole class of silent total failure. It does NOT paper over a dead
+		 * plane: both attempts must fail before the plane is called down.
+		 */
+		const probeTwice = async (url: string, timeoutMs: number): Promise<{ ok: boolean; status: number } | undefined> => {
+			const first = await get(url, timeoutMs);
+			if (first !== undefined) {
+				return first;
+			}
+			await new Promise(resolve => setTimeout(resolve, PROBE_RETRY_DELAY_MS));
+			return get(url, timeoutMs);
+		};
 		return {
-			local: async url => (await get(url, LOCAL_PROBE_TIMEOUT_MS))?.ok === true,
+			local: async url => (await probeTwice(url, LOCAL_PROBE_TIMEOUT_MS))?.ok === true,
 			remote: async url => {
-				const res = await get(url, REMOTE_PROBE_TIMEOUT_MS);
+				const res = await probeTwice(url, REMOTE_PROBE_TIMEOUT_MS);
 				return res !== undefined && (res.ok || res.status === 401 || res.status === 403);
 			},
 		};

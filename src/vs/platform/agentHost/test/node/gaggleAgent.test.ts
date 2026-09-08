@@ -257,4 +257,46 @@ suite('gaggleAgent (114)', () => {
 			a.dispose();
 		}
 	});
+
+	// #1409. The hop verdict is cached for the SESSION, so a single lost probe
+	// left an empty roster with relaunch as the only remedy — measured 2026-09-07
+	// across two launches minutes apart against a router healthy throughout.
+	// `refreshModels` is what resolves the hop; `createSession` does not probe,
+	// which is why the first version of these cases measured nothing.
+
+	test('one lost local probe does not condemn the plane', async () => {
+		let calls = 0;
+		const flaky: GaggleFetchLike = async () => {
+			calls += 1;
+			if (calls === 1) {
+				throw new Error('probe lost');
+			}
+			return { ok: true, status: 200 };
+		};
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' }, flaky);
+		try {
+			await a.refreshModels();
+			assert.ok(calls >= 2, `the probe must be retried after a loss (calls=${calls})`);
+		} finally {
+			a.dispose();
+		}
+	});
+
+	test('a genuinely dead plane still fails, after BOTH attempts', async () => {
+		let calls = 0;
+		const dead: GaggleFetchLike = async () => {
+			calls += 1;
+			throw new Error('down');
+		};
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' }, dead);
+		try {
+			await a.refreshModels();
+			// The retry must not soften the verdict: a dead plane is still dead, and
+			// both attempts must have been made before saying so.
+			assert.ok(calls >= 2, `both attempts must run (calls=${calls})`);
+			assert.deepStrictEqual(a.models.get(), [], 'a dead plane advertises no models');
+		} finally {
+			a.dispose();
+		}
+	});
 });
