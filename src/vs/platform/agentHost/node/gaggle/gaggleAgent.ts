@@ -50,7 +50,7 @@ import { parseChatUri } from '../../common/state/sessionState.js';
 import { attributionPart } from './gaggleAttribution.js';
 import { gaggleCopy } from './gaggleCopy.js';
 import { resolveCredential, type GaggleEnv } from './gaggleCredential.js';
-import { anyHopConfigured, joinUrl, loadHopConfig, remoteSmrResource, resolveHop, type GaggleHopProbes, type GaggleHopResolution, type GaggleResolvedHop } from './gaggleHopPolicy.js';
+import { anyHopConfigured, assignedHopProfiles, joinUrl, loadHopConfig, remoteSmrResource, resolveHop, type GaggleHopProbes, type GaggleHopResolution, type GaggleResolvedHop } from './gaggleHopPolicy.js';
 import { citationsPart, IGaggleMemoryBridge, isSovereignDbAssigned, memoryOffNoticePart, NullMemoryBridge } from './gaggleMemoryBridge.js';
 import { sovereignDbResource } from './gaggleSovereignDbMemoryBridge.js';
 import { AuthRequiredReason, type AuthRequiredParams } from '../../common/state/protocol/common/notifications.js';
@@ -84,6 +84,21 @@ interface GaggleSessionState {
 	memoryNoticeShown: boolean;
 	readonly clients: Map<string, IActiveClient>;
 }
+
+/**
+ * 121: the chosen plane out of a session config, or undefined.
+ *
+ * A value that is not a string is ignored rather than coerced, and validity
+ * against the assignment is checked at resolution — a name the deployment does
+ * not assign must be refused by name, not silently dropped to the default.
+ */
+function hopProfileFromConfig(config?: { readonly config?: Record<string, unknown> }): string | undefined {
+	const raw = config?.config?.[GAGGLE_HOP_CONFIG_KEY];
+	return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
+}
+
+/** 121: the session-config key naming the chosen SMR plane. */
+export const GAGGLE_HOP_CONFIG_KEY = 'smrPlane';
 
 const HISTORY_TURNS = 20;
 const LOCAL_PROBE_TIMEOUT_MS = 2000;
@@ -128,8 +143,13 @@ export class GaggleAgent extends Disposable implements IAgent {
 	private readonly _catalog: GaggleModelCatalog;
 	private readonly _sessions = new Map<string, GaggleSessionState>();
 	private readonly _clients = new Map<string, Client>();
-	private _hop: { readonly resolution: GaggleHopResolution; readonly at: number } | undefined;
-	private _hopInFlight: Promise<GaggleHopResolution> | undefined;
+	/**
+	 * 121: keyed by the chosen plane, because the hop is no longer one answer for
+	 * the whole agent — two sessions may legitimately be on different planes.
+	 * The empty key is "no preference", i.e. the local-first default.
+	 */
+	private readonly _hop = new Map<string, { readonly resolution: GaggleHopResolution; readonly at: number }>();
+	private readonly _hopInFlight = new Map<string, Promise<GaggleHopResolution>>();
 
 	readonly models: IObservable<readonly IAgentModelInfo[]>;
 	readonly chats: IAgentChats;
@@ -270,16 +290,19 @@ export class GaggleAgent extends Disposable implements IAgent {
 		};
 	}
 
-	private async _resolveHop(force = false): Promise<GaggleHopResolution> {
-		if (!force && this._hop && Date.now() - this._hop.at < this._hopTtlMs) {
-			return this._hop.resolution;
+	private async _resolveHop(force = false, preference?: string): Promise<GaggleHopResolution> {
+		const key = preference?.trim() ?? '';
+		const cached = this._hop.get(key);
+		if (!force && cached && Date.now() - cached.at < this._hopTtlMs) {
+			return cached.resolution;
 		}
-		if (this._hopInFlight) {
-			return this._hopInFlight;
+		const inFlight = this._hopInFlight.get(key);
+		if (inFlight) {
+			return inFlight;
 		}
-		this._hopInFlight = resolveHop(this._env, this._probes()).then(resolution => {
-			this._hop = { resolution, at: Date.now() };
-			this._hopInFlight = undefined;
+		const pending = resolveHop(this._env, this._probes(), key || undefined).then(resolution => {
+			this._hop.set(key, { resolution, at: Date.now() });
+			this._hopInFlight.delete(key);
 			if (resolution.ok) {
 				this._logService.info(`gaggle hop: ${resolution.hop.kind} (${resolution.hop.profile}, probe=${resolution.hop.probe})`);
 			} else {
@@ -297,7 +320,8 @@ export class GaggleAgent extends Disposable implements IAgent {
 			}
 			return resolution;
 		});
-		return this._hopInFlight;
+		this._hopInFlight.set(key, pending);
+		return pending;
 	}
 
 	/**
@@ -354,6 +378,9 @@ export class GaggleAgent extends Disposable implements IAgent {
 			folder: folderUri?.fsPath,
 			createdAt: new Date().toISOString(),
 			modelId: config?.model?.id,
+			// 121: the plane this session talks to, if the operator chose one.
+			// A name from the assignment, never a URL.
+			hopProfile: hopProfileFromConfig(config),
 		};
 		await this._sessionStore.create(session, record);
 		this._sessions.set(session.toString(), { session, record, memoryNoticeShown: false, clients: new Map() });
@@ -385,12 +412,43 @@ export class GaggleAgent extends Disposable implements IAgent {
 		return state;
 	}
 
+	/**
+	 * Gaggle 121 — which SMR plane this session talks to.
+	 *
+	 * Hop resolution is local-first, so a healthy local endpoint made an
+	 * assigned remote plane unreachable: every turn took the local Slim, which
+	 * answers with a deterministic stub. This is the operator's way to say
+	 * otherwise, per session, using the vendor's own configuration surface.
+	 *
+	 * The options are the ASSIGNED planes and nothing else. With none assigned
+	 * the schema carries no property at all, rather than an empty picker
+	 * implying a choice exists.
+	 */
 	async resolveSessionConfig(params: IAgentResolveSessionConfigParams): Promise<ResolveSessionConfigResult> {
-		return { schema: { type: 'object', properties: {} }, values: params.config ?? {} };
+		const options = assignedHopProfiles(this._env);
+		if (options.length === 0) {
+			return { schema: { type: 'object', properties: {} }, values: params.config ?? {} };
+		}
+		return {
+			schema: {
+				type: 'object',
+				properties: {
+					[GAGGLE_HOP_CONFIG_KEY]: {
+						type: 'string',
+						title: 'SMR plane',
+						description: 'Which assigned Sovereign Model Router this session talks to. Unset follows the default: the local endpoint when it is healthy.',
+						enum: options,
+						enumLabels: options.map(name => (name === 'local' ? 'Local' : name)),
+						sessionMutable: true,
+					},
+				},
+			},
+			values: params.config ?? {},
+		};
 	}
 
 	async sessionConfigCompletions(_params: IAgentSessionConfigCompletionsParams): Promise<SessionConfigCompletionsResult> {
-		return { items: [] };
+		return { items: assignedHopProfiles(this._env).map(name => ({ label: name, value: name })) };
 	}
 
 	async listSessions(): Promise<IAgentSessionMetadata[]> {
@@ -509,7 +567,9 @@ export class GaggleAgent extends Disposable implements IAgent {
 		if (state.activeTurn) {
 			throw new Error(gaggleCopy.turnFailed('a turn is already running in this session'));
 		}
-		const resolution = await this._resolveHop();
+		// 121: the plane THIS session chose. Unset follows the local-first default,
+		// so a session that never chose behaves exactly as it did before.
+		const resolution = await this._resolveHop(false, state.record.hopProfile);
 		if (!resolution.ok) {
 			throw new Error(resolution.reason === 'unconfigured'
 				? gaggleCopy.noHopConfigured()

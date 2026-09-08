@@ -25,6 +25,11 @@ export interface GaggleSessionRecord {
 	readonly folder?: string;
 	readonly createdAt: string;
 	modelId?: string;
+	/**
+	 * 121: which assigned SMR plane this session talks to. Unset follows the
+	 * default (local-first). A profile NAME, never a URL and never a credential.
+	 */
+	hopProfile?: string;
 	/** First prompt line, ≤ 80 chars — never the full prompt. */
 	title?: string;
 }

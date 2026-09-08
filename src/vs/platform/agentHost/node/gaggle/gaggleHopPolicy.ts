@@ -192,8 +192,64 @@ async function remoteReachable(url: string, probes: GaggleHopProbes): Promise<bo
  * Auto-select the hop exactly as the Ask chat does. Credentials are the caller's
  * concern (see `gaggleCredential.ts`); this decides only *where*.
  */
-export async function resolveHop(env: GaggleHopEnv, probes: GaggleHopProbes): Promise<GaggleHopResolution> {
+/**
+ * Gaggle 121 — the planes an operator may choose, from the ASSIGNMENT alone.
+ *
+ * `local` appears only when a local endpoint is assigned, and each named
+ * profile only when the deployment configured it. An option naming a plane
+ * nobody assigned would be an invented endpoint in a dropdown, which is the
+ * same rule that keeps hosts out of the product everywhere else.
+ */
+export function assignedHopProfiles(env: GaggleHopEnv): string[] {
 	const config = loadHopConfig(env);
+	const options: string[] = [];
+	if (localConfigured(config)) {
+		options.push('local');
+	}
+	for (const name of Object.keys(config.profiles)) {
+		if (name !== 'local') {
+			options.push(name);
+		}
+	}
+	return options;
+}
+
+export async function resolveHop(env: GaggleHopEnv, probes: GaggleHopProbes, preference?: string): Promise<GaggleHopResolution> {
+	const config = loadHopConfig(env);
+
+	// 121: a named choice goes straight to that plane. Probing the CHOSEN plane
+	// is fine; probing local first — a plane the operator did not choose — is
+	// exactly what made a connected router unreachable. An absent preference
+	// falls through to the local-first path below, unchanged.
+	const wanted = preference?.trim();
+	if (wanted) {
+		if (wanted === 'local') {
+			if (!localConfigured(config) || !config.baseUrl || !config.healthzPath) {
+				return { ok: false, reason: 'unconfigured' };
+			}
+			let healthy = false;
+			try {
+				healthy = await probes.local(joinUrl(config.baseUrl, config.healthzPath));
+			} catch {
+				healthy = false;
+			}
+			if (!healthy) {
+				// Named, and down. Never quietly answered by a different plane.
+				return { ok: false, reason: 'local_down_cloud_disallowed' };
+			}
+			const baseUrl = normalizeHopBaseUrl(config.baseUrl);
+			return { ok: true, hop: { kind: 'local', profile: 'local', baseUrl, dataPlaneBaseUrl: dataPlaneBase(baseUrl), probe: 'ok' } };
+		}
+		const chosen = config.profiles[wanted];
+		if (!chosen) {
+			return { ok: false, reason: 'unconfigured' };
+		}
+		if (!(await remoteReachable(chosen, probes))) {
+			return { ok: false, reason: 'remote_plane_unreachable' };
+		}
+		return { ok: true, hop: remoteHop({ name: wanted, url: chosen }, 'skipped') };
+	}
+
 	if (localConfigured(config) && config.baseUrl && config.healthzPath) {
 		let healthy = false;
 		try {
