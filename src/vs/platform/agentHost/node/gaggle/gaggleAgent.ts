@@ -364,7 +364,13 @@ export class GaggleAgent extends Disposable implements IAgent {
 	 * not merely the reachable one.
 	 */
 	async refreshModels(preference?: string): Promise<void> {
-		const resolution = await this._resolveHop(true, preference);
+		// 122 fixit: fall back to the plane the catalogue is SUPPOSED to reflect,
+		// not to local-first. `agentModelRefreshScheduler` calls this with no
+		// argument on a timer, and that periodic call overwrote a chosen plane's
+		// catalogue seconds after it loaded — the packaged log showed
+		// `hop: remote (prod)` immediately followed by `6 model(s) from the LOCAL
+		// hop`. The operator chose prod and kept seeing local's models.
+		const resolution = await this._resolveHop(true, preference ?? this._catalogPlane);
 		if (!resolution.ok) {
 			await this._catalog.refresh(undefined, undefined);
 			return;
@@ -387,6 +393,16 @@ export class GaggleAgent extends Disposable implements IAgent {
 		void this._applyHopProfile(session, hopProfileFromConfig({ config: values }));
 	}
 
+	/**
+	 * The plane whose catalogue the agent currently advertises.
+	 *
+	 * Agent-wide, while the plane itself is per-session: one `models` observable
+	 * cannot serve two sessions on different planes. Reflecting the most recently
+	 * chosen plane is what an operator expects, and is strictly better than
+	 * reverting to local-first on every scheduler tick.
+	 */
+	private _catalogPlane: string | undefined;
+
 	private async _applyHopProfile(session: URI, profile: string | undefined): Promise<void> {
 		try {
 			const state = await this._state(session);
@@ -397,6 +413,7 @@ export class GaggleAgent extends Disposable implements IAgent {
 				?? { ...state.record, hopProfile: profile };
 			// A plane name, never a URL — the same rule the options list follows.
 			this._logService.info(`gaggle hop: session ${AgentSession.id(state.session)} targets ${profile ?? 'the default (local-first)'}`);
+			this._catalogPlane = profile;
 			await this.refreshModels(profile);
 		} catch (err) {
 			// A failed config change must not take the session down with it; the

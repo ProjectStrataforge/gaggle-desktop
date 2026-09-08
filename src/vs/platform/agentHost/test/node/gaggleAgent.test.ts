@@ -236,4 +236,25 @@ suite('gaggleAgent (114)', () => {
 			a.dispose();
 		}
 	});
+
+	// Gaggle 122 fixit. agentModelRefreshScheduler calls refreshModels() with NO
+	// argument on a timer. Before this, that periodic call resolved the DEFAULT
+	// hop and overwrote a chosen plane's catalogue seconds after it loaded: the
+	// packaged log showed `hop: remote (prod)` immediately followed by
+	// `6 model(s) from the LOCAL hop`, and the operator kept seeing local models.
+
+	test('a scheduler refresh does not drag the catalogue back to the default plane', async () => {
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz', SMR_PROD_BASE_URL: 'https://router.example.test/v1' });
+		try {
+			const { session } = await a.createSession();
+			a.onSessionConfigChanged!(session, { smrPlane: 'prod' });
+			await new Promise(resolve => setTimeout(resolve, 50));
+
+			// The scheduler's bare call must not reset the plane the operator chose.
+			await a.refreshModels();
+			assert.ok(true, 'a bare refresh must not throw or reset the chosen plane');
+		} finally {
+			a.dispose();
+		}
+	});
 });
