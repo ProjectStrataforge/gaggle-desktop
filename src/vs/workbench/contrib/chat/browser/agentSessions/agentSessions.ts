@@ -150,6 +150,16 @@ export interface IAgentHostDelegationRequest {
 	readonly prompt: string;
 	/** Attachments to include with the first request (e.g. the prior transcript). */
 	readonly attachedContext?: IChatRequestVariableEntry[];
+	/**
+	 * Gaggle 123: the project folder to create the target session in.
+	 *
+	 * Omitted, the handoff reuses the source session's folder — the only
+	 * behaviour that existed before. Supplied, the target is created in THAT
+	 * folder instead, which is the whole of "continue this conversation in
+	 * another project". No running session is ever repointed; a new one is born
+	 * beside the source.
+	 */
+	readonly folderUri?: URI;
 }
 
 export function getAgentCanContinueIn(provider: AgentSessionTarget): boolean {
