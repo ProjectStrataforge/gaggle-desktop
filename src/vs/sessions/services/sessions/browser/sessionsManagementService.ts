@@ -444,7 +444,7 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 		const { provider, sessionTypeId } = this._resolveProviderForNewSession(folderUri, options);
 
 		const previousNewSession = this._newSession.get();
-		const session = provider.createNewSession(folderUri, sessionTypeId);
+		const session = provider.createNewSession(folderUri, sessionTypeId, options);
 
 		// Providers no longer dispose the previous new session implicitly, so
 		// dispose the one this composer just replaced. Use its own provider
@@ -463,7 +463,7 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 	createAutomationSession(folderUri: URI, options?: ICreateNewSessionOptions): ISession {
 		const { provider, sessionTypeId } = this._resolveProviderForNewSession(folderUri, options);
 		const previousAutomationSession = this._automationSession.get();
-		const session = provider.createNewSession(folderUri, sessionTypeId);
+		const session = provider.createNewSession(folderUri, sessionTypeId, options);
 		if (previousAutomationSession && previousAutomationSession.sessionId !== session.sessionId) {
 			this._getProvider(previousAutomationSession)?.deleteNewSession(previousAutomationSession.sessionId);
 		}
@@ -725,7 +725,7 @@ export class SessionsManagementService extends Disposable implements ISessionsMa
 				throw new WorkspaceNotTrustedError();
 			}
 		}
-		const session = provider.createNewSession(folderUri, sessionTypeId);
+		const session = provider.createNewSession(folderUri, sessionTypeId, createOptions);
 		const supportsWorktreeConfiguration = provider.getSessionTypes(folderUri)
 			.find(sessionType => sessionType.id === sessionTypeId)?.supportsWorktreeConfiguration === true;
 		return this._configureAndSendNewSession(provider, session, options, createOptions, supportsWorktreeConfiguration, token, folderUri);

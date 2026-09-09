@@ -160,6 +160,16 @@ export interface IAgentHostDelegationRequest {
 	 * beside the source.
 	 */
 	readonly folderUri?: URI;
+	/**
+	 * Gaggle 123: protocol turns to seed on the target. When present the
+	 * handler forwards them through `openNewSession` / `createNewSession` and
+	 * does NOT send the transcript as a new prompt (that would duplicate a
+	 * carry the model already has).
+	 */
+	readonly importConversation?: {
+		readonly turns: readonly import('../../../../../platform/agentHost/common/state/protocol/state.js').Turn[];
+		readonly model?: import('../../../../../platform/agentHost/common/state/protocol/state.js').ModelSelection;
+	};
 }
 
 export function getAgentCanContinueIn(provider: AgentSessionTarget): boolean {

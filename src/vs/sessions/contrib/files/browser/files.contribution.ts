@@ -20,6 +20,7 @@ import { IViewsService } from '../../../../workbench/services/views/common/views
 import { IsSessionsWindowContext, WorkspaceFolderCountContext } from '../../../../workbench/common/contextkeys.js';
 import { SESSIONS_FILES_EMPTY_VIEW_ID, SESSIONS_FILES_VIEW_ID, SessionsExplorerEmptyView, SessionsExplorerView } from './filesView.js';
 import './workspaceFolderActions.js';
+import './projectFolderMenu.js';
 import { KeyCode, KeyMod } from '../../../../base/common/keyCodes.js';
 import { SessionHasGitRepositoryContext, SessionHasGitSyncActionRunningContext, IsNewChatSessionContext, IsPhoneLayoutContext, SessionHasWorkspaceContext } from '../../../common/contextkeys.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';

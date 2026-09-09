@@ -32,6 +32,11 @@ export interface GaggleSessionRecord {
 	hopProfile?: string;
 	/** First prompt line, ≤ 80 chars — never the full prompt. */
 	title?: string;
+	/**
+	 * Gaggle 123: folder the carried conversation came from. Immediate source
+	 * only — a second carry overwrites, it does not grow a chain.
+	 */
+	carriedFrom?: string;
 }
 
 /** What actually served a turn (`CompletionStream.routing`), for the reply part and the log line. */
@@ -60,4 +65,12 @@ export interface GaggleTurnRecord {
 	readonly usage?: GaggleUsage;
 	readonly state: 'complete' | 'cancelled' | 'error';
 	readonly error?: { readonly message: string; readonly code?: string };
+	/** Gaggle 123: seeded from another session. Absent on native turns. */
+	readonly carried?: true;
+	/**
+	 * Gaggle 123: folder this turn belongs to. Carried turns take the source
+	 * folder; native turns take their own. `readonly` at the record — append-only
+	 * JSONL, so old lines simply lack the field.
+	 */
+	readonly folder?: string;
 }

@@ -76,6 +76,21 @@ export class GaggleSessionStore {
 		await fs.promises.appendFile(join(dir, GAGGLE_TURNS_FILE), `${JSON.stringify(turn)}\n`, 'utf8');
 	}
 
+	/**
+	 * Gaggle 123: write the carried transcript in one shot before the session
+	 * is announced. `appendTurn` stays append-only; this is the only place a
+	 * turns file is created whole.
+	 */
+	async seedTurns(session: URI, turns: readonly GaggleTurnRecord[]): Promise<void> {
+		if (turns.length === 0) {
+			return;
+		}
+		const dir = this._dir(session);
+		await fs.promises.mkdir(dir, { recursive: true });
+		const body = `${turns.map(turn => JSON.stringify(turn)).join('\n')}\n`;
+		await fs.promises.writeFile(join(dir, GAGGLE_TURNS_FILE), body, 'utf8');
+	}
+
 	/** Replays the turn log. A corrupt line (typically a torn trailing write) is dropped with one log line, never a crash. */
 	async readTurns(session: URI): Promise<GaggleTurnRecord[]> {
 		const file = join(this._dir(session), GAGGLE_TURNS_FILE);

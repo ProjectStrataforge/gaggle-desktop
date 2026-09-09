@@ -9,7 +9,17 @@ import { URI } from '../../../../base/common/uri.js';
 import { IChatRequestVariableEntry } from '../../../../workbench/contrib/chat/common/attachments/chatVariableEntries.js';
 import { ILanguageModelChatMetadataAndIdentifier } from '../../../../workbench/contrib/chat/common/languageModels.js';
 import { ModelIdentifierResolution } from '../../../../workbench/contrib/chat/common/modelSelection.js';
+import type { ModelSelection, Turn } from '../../../../platform/agentHost/common/state/protocol/state.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection } from './session.js';
+
+/**
+ * Gaggle 123: optional carry payload on the sessions-window create path.
+ * `undefined` for every other provider. Must stay optional at every hop.
+ */
+export interface ISessionImportConversation {
+	readonly turns: readonly Turn[];
+	readonly model?: ModelSelection;
+}
 
 /**
  * Event fired when sessions change within a provider.
@@ -178,8 +188,10 @@ export interface ISessionsProvider {
 	 * into the session list) or disposed via {@link deleteNewSession}.
 	 * @param workspaceUri The URI of the repository to create the session for.
 	 * @param sessionTypeId The ID of the session type to create.
+	 * @param options Gaggle 123: optional; `importConversation` is forwarded
+	 * only by the agent-host provider. Every other provider ignores it.
 	 */
-	createNewSession(workspaceUri: URI, sessionTypeId: string): ISession;
+	createNewSession(workspaceUri: URI, sessionTypeId: string, options?: { readonly importConversation?: ISessionImportConversation }): ISession;
 
 	/**
 	 * Create a new **quick chat**: a workspace-less session not scoped to any

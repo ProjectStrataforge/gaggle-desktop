@@ -16,6 +16,7 @@ import { ThemeIcon } from '../../../../base/common/themables.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { IActionViewItemService } from '../../../../platform/actions/browser/actionViewItemService.js';
 import { Action2, MenuItemAction, registerAction2 } from '../../../../platform/actions/common/actions.js';
+import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { ContextKeyExpr } from '../../../../platform/contextkey/common/contextkey.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { IWorkbenchContribution, registerWorkbenchContribution2, WorkbenchPhase } from '../../../../workbench/common/contributions.js';
@@ -28,6 +29,7 @@ import { ISessionsService } from '../../../services/sessions/browser/sessionsSer
 import { getSessionWorkspaceKind, SessionWorkspaceKind } from '../../../services/sessions/common/session.js';
 import { IActiveSession } from '../../../services/sessions/common/sessionsManagement.js';
 import { SESSIONS_FILES_VIEW_ID } from './filesView.js';
+import { SHOW_PROJECT_FOLDER_MENU_COMMAND_ID } from './projectFolderCarry.js';
 
 // --- Open Files view action
 
@@ -94,6 +96,7 @@ export class OpenFilesViewActionViewItem extends SessionHeaderMetaActionViewItem
 		action: MenuItemAction,
 		options: IActionViewItemOptions,
 		@ISessionContext sessionContext: ISessionContext,
+		@ICommandService private readonly _commandService: ICommandService,
 	) {
 		super(undefined, action, options);
 
@@ -125,6 +128,28 @@ export class OpenFilesViewActionViewItem extends SessionHeaderMetaActionViewItem
 		super.render(container);
 		this.element?.classList.add('chat-composite-bar-meta-workspace-item');
 		this.button?.element.classList.add('chat-composite-bar-meta-workspace-button');
+		this.element?.addEventListener('contextmenu', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			this._openProjectFolderMenu(e.clientX, e.clientY);
+		});
+	}
+
+	protected override getAdditionalLabelContent(): Array<HTMLElement | string> {
+		const chevron = $('span.chat-composite-bar-meta-item-icon' + ThemeIcon.asCSSSelector(Codicon.chevronDown));
+		chevron.setAttribute('role', 'button');
+		chevron.setAttribute('aria-label', localize('agentSessions.projectFolder.menu', "Project folder"));
+		chevron.addEventListener('click', e => {
+			e.preventDefault();
+			e.stopPropagation();
+			const rect = chevron.getBoundingClientRect();
+			this._openProjectFolderMenu(rect.left, rect.bottom);
+		});
+		return [chevron];
+	}
+
+	private _openProjectFolderMenu(x: number, y: number): void {
+		void this._commandService.executeCommand(SHOW_PROJECT_FOLDER_MENU_COMMAND_ID, { x, y });
 	}
 
 	protected override getIconElement(): HTMLElement | undefined {

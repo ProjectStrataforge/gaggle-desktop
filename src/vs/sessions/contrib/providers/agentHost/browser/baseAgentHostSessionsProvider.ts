@@ -49,7 +49,7 @@ import { agentHostSessionWorkspaceKey } from '../../../../common/agentHostSessio
 import { isSessionConfigComplete } from '../../../../common/sessionConfig.js';
 import { ChatInteractivity, ChatOriginKind, DEFAULT_CHAT_CAPABILITIES, effectiveChatInteractivity, IChat, IChatCapabilities, IGitHubInfo, IGitHubIssueRef, IGitHubPullRequestRef, ISession, ISessionAgentRef, ISessionCapabilities, ISessionChangeset, ISessionChangesSummary, ISessionFile, ISessionFileChange, ISessionTurnFileChange, ISessionType, ISessionWorkspace, ISessionWorkspaceBrowseAction, ISideChatSelection, sessionFileChangesEqual, sessionWorkspaceEqual, SessionStatus, SessionTypeAuthRequirement, toSessionId } from '../../../../services/sessions/common/session.js';
 import { ISessionsService } from '../../../../services/sessions/browser/sessionsService.js';
-import { IDeleteChatOptions, ISendRequestOptions, ISessionChangeEvent, ISessionModelPickerOptions, ISessionModelsSnapshot } from '../../../../services/sessions/common/sessionsProvider.js';
+import { IDeleteChatOptions, ISendRequestOptions, ISessionChangeEvent, ISessionImportConversation, ISessionModelPickerOptions, ISessionModelsSnapshot } from '../../../../services/sessions/common/sessionsProvider.js';
 import { IGitHubService } from '../../../github/browser/githubService.js';
 import { computeSessionPullRequestIcon } from '../../../github/browser/pullRequestIconStatus.js';
 import { IPullRequestIconCache } from '../../../github/browser/pullRequestIconCache.js';
@@ -1500,6 +1500,11 @@ interface INewSessionConstructionContext {
 	readonly onSessionState?: (sessionId: string, state: SessionState | undefined) => void;
 	/** Initial active-client snapshot for the eager `createSession`. Drift is reconciled by the handler before the first message. */
 	readonly activeClient?: SessionActiveClient;
+	/**
+	 * Gaggle 123: optional carry. Spread onto `connection.createSession` in
+	 * {@link NewSession.eagerCreate}. Undefined for every session that is not a carry.
+	 */
+	readonly importConversation?: ISessionImportConversation;
 }
 
 /**
@@ -1605,6 +1610,7 @@ class NewSession extends Disposable {
 	private readonly _onSessionState: ((sessionId: string, state: SessionState | undefined) => void) | undefined;
 
 	private readonly _initialActiveClient: SessionActiveClient | undefined;
+	private readonly _importConversation: ISessionImportConversation | undefined;
 
 	private readonly _logService: ILogService;
 	private readonly _providerId: string;
@@ -1628,6 +1634,7 @@ class NewSession extends Disposable {
 		this._logService = ctx.logService;
 		this._onSessionState = ctx.onSessionState;
 		this._initialActiveClient = ctx.activeClient;
+		this._importConversation = ctx.importConversation;
 
 		const resource = URI.from({ scheme: ctx.resourceScheme, path: `/${generateUuid()}` });
 		this._isActiveSessionObs = derived(this, reader => isEqual(sessionsService.activeSession.read(reader)?.resource, resource));
@@ -1940,6 +1947,7 @@ class NewSession extends Disposable {
 					progressToken: generateUuid(),
 					...(this._selectedAgent ? { agent: { uri: this._selectedAgent.uri } } : {}),
 					...(this._initialActiveClient ? { activeClient: this._initialActiveClient } : {}),
+					...(this._importConversation ? { importConversation: this._importConversation } : {}),
 				});
 			} catch (err) {
 				this._logService.warn(`[${this._providerId}] Eager createSession failed for ${backendUri.toString()}: ${err}`);
@@ -2644,7 +2652,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 
 	// -- Session lifecycle ----------------------------------------------------
 
-	createNewSession(workspaceUri: URI, sessionTypeId: string): ISession {
+	createNewSession(workspaceUri: URI, sessionTypeId: string, options?: { readonly importConversation?: INewSessionConstructionContext['importConversation'] }): ISession {
 		if (!workspaceUri) {
 			throw new Error('Workspace has no repository URI');
 		}
@@ -2661,7 +2669,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			throw new Error(`Cannot resolve workspace for URI: ${workspaceUri.toString()}`);
 		}
 
-		return this._createDraftSession(sessionType, workspace, false);
+		return this._createDraftSession(sessionType, workspace, false, options?.importConversation);
 	}
 
 	createQuickChat(sessionTypeId: string): ISession {
@@ -2684,7 +2692,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 	 * given session type. Shared by {@link createNewSession} (workspace-bound)
 	 * and {@link createQuickChat} (workspace-less, `quickChat === true`).
 	 */
-	private _createDraftSession(sessionType: ISessionType, workspace: ISessionWorkspace | undefined, quickChat: boolean): ISession {
+	private _createDraftSession(sessionType: ISessionType, workspace: ISessionWorkspace | undefined, quickChat: boolean, importConversation?: ISessionImportConversation): ISession {
 		// Tear-down of superseded drafts is handled by the management layer
 		// (it calls `deleteNewSession` on the previous pending session). Each
 		// new session is tracked independently in `_newSessions` so several can
@@ -2711,6 +2719,7 @@ export abstract class BaseAgentHostSessionsProvider extends Disposable implement
 			activeClient: connection
 				? this._activeClientService.getActiveClient(resourceScheme, connection.clientId)
 				: undefined,
+			importConversation,
 		}, {
 			icon: this.iconForAgentProvider(sessionType.id) ?? this.icon,
 			loading: this.authenticationPending,

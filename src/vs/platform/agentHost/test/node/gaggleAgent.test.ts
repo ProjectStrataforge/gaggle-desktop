@@ -13,6 +13,7 @@ import { NullLogService } from '../../../log/common/log.js';
 import { AgentSession, AgentSignal, IAgent } from '../../common/agentService.js';
 import { ISessionDataService } from '../../common/sessionDataService.js';
 import { ActionType } from '../../common/state/protocol/common/actions.js';
+import { MessageKind, ResponsePartKind, TurnState } from '../../common/state/protocol/state.js';
 import { GaggleAgent, type GaggleFetchLike } from '../../node/gaggle/gaggleAgent.js';
 import { GAGGLE_PROVIDER_ID } from '../../node/gaggle/gaggleTypes.js';
 
@@ -295,6 +296,55 @@ suite('gaggleAgent (114)', () => {
 			// both attempts must have been made before saying so.
 			assert.ok(calls >= 2, `both attempts must run (calls=${calls})`);
 			assert.deepStrictEqual(a.models.get(), [], 'a dead plane advertises no models');
+		} finally {
+			a.dispose();
+		}
+	});
+
+	test('importConversation seeds the store so getSessionMessages replays the carry (T005/T006a)', async () => {
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' });
+		try {
+			const created = await a.createSession({
+				workingDirectories: [URI.file(root)],
+				importConversation: {
+					turns: [{
+						id: 'src-1',
+						startedAt: '2026-09-08T00:00:00.000Z',
+						duration: 12,
+						message: { text: 'what did we decide', origin: { kind: MessageKind.User }, _meta: { gaggleCarriedFrom: '/repos/alpha' } },
+						responseParts: [{ kind: ResponsePartKind.Markdown, id: 'src-1#reply', content: 'a handoff, never a repoint' }],
+						usage: undefined,
+						state: TurnState.Complete,
+					}],
+				},
+			});
+			const messages = await a.getSessionMessages(created.session);
+			assert.strictEqual(messages.length, 1);
+			assert.strictEqual(messages[0].message.text, 'what did we decide');
+			const reply = messages[0].responseParts.find(p => p.kind === ResponsePartKind.Markdown);
+			assert.ok(reply && 'content' in reply);
+			assert.strictEqual(reply.content, 'a handoff, never a repoint');
+			assert.deepStrictEqual(a.getDescriptor().capabilities, {});
+		} finally {
+			a.dispose();
+		}
+	});
+
+	test('importConversation still refuses before any write when no hop is assigned (FR-009)', async () => {
+		const a = agent({});
+		try {
+			await assert.rejects(() => a.createSession({
+				importConversation: {
+					turns: [{
+						id: 'src-1',
+						message: { text: 'secret prompt', origin: { kind: MessageKind.User } },
+						responseParts: [],
+						usage: undefined,
+						state: TurnState.Complete,
+					}],
+				},
+			}), /No model route is assigned/);
+			assert.deepStrictEqual(fs.readdirSync(root), []);
 		} finally {
 			a.dispose();
 		}

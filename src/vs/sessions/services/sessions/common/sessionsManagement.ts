@@ -9,7 +9,7 @@ import { URI } from '../../../../base/common/uri.js';
 import { CancellationToken } from '../../../../base/common/cancellation.js';
 import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
 import { IChat, ISession, ISessionType, ISessionWorkspace, ISideChatSelection } from './session.js';
-import { IDeleteChatOptions, ISendRequestOptions as ISessionsProviderSendRequestOptions } from './sessionsProvider.js';
+import { IDeleteChatOptions, ISessionImportConversation, ISendRequestOptions as ISessionsProviderSendRequestOptions } from './sessionsProvider.js';
 
 /** Raised when unattended session creation targets a workspace that requires trust. */
 export class WorkspaceNotTrustedError extends Error {
@@ -99,6 +99,12 @@ export interface ICreateNewSessionOptions {
 	 * programmatic session creation and is not surfaced in the new-session UI.
 	 */
 	readonly worktreeBranchTrack?: boolean;
+	/**
+	 * Gaggle 123: seed the new session with an existing conversation.
+	 * Optional at every hop; `undefined` for every other provider. Do not
+	 * confuse with session-level `fork` — a fork cannot change folder.
+	 */
+	readonly importConversation?: ISessionImportConversation;
 }
 
 /**

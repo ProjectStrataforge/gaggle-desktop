@@ -60,7 +60,12 @@ CommandsRegistry.registerCommand(CHAT_DELEGATE_TO_AGENT_HOST_SESSION_COMMAND_ID,
 		// own. Changing the folder makes the gate required, not optional.
 		let session;
 		if (requestedFolder) {
-			const opened = await sessionsService.openNewSession({ folderUri, providerId, sessionTypeId });
+			const opened = await sessionsService.openNewSession({
+				folderUri,
+				providerId,
+				sessionTypeId,
+				importConversation: request.importConversation,
+			});
 			session = opened.session;
 			if (!session) {
 				// Refuse VISIBLY. A carry that half-lands, or lands somewhere the
@@ -70,10 +75,18 @@ CommandsRegistry.registerCommand(CHAT_DELEGATE_TO_AGENT_HOST_SESSION_COMMAND_ID,
 				throw new Error(`Could not continue this conversation there: ${reason}.`);
 			}
 		} else {
-			session = sessionsManagementService.createNewSession(folderUri, { providerId, sessionTypeId });
+			session = sessionsManagementService.createNewSession(folderUri, {
+				providerId,
+				sessionTypeId,
+				importConversation: request.importConversation,
+			});
 		}
 		sessionsService.insertAt(session, sourceSession.sessionId, 'right', true);
-		await sessionsManagementService.sendNewChatRequest(session, { query: request.prompt, attachedContext: request.attachedContext });
+		// A carry already seeded the conversation. Sending it again as a new
+		// prompt would duplicate history the model is about to receive.
+		if (!request.importConversation) {
+			await sessionsManagementService.sendNewChatRequest(session, { query: request.prompt, attachedContext: request.attachedContext });
+		}
 	} catch (e) {
 		logService.error(`[Sessions] Agent host delegation to '${sessionTypeId}' failed`, e);
 		throw e;

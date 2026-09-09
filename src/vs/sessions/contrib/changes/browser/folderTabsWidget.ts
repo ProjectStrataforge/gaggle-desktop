@@ -19,6 +19,7 @@ import { IHoverService } from '../../../../platform/hover/browser/hover.js';
 import { IStorageService, StorageScope, StorageTarget } from '../../../../platform/storage/common/storage.js';
 import { IWorkspaceContextService } from '../../../../platform/workspace/common/workspace.js';
 import { NEW_SESSION_ACTION_ID } from '../../chat/common/constants.js';
+import { SHOW_PROJECT_FOLDER_MENU_COMMAND_ID } from '../../files/browser/projectFolderCarry.js';
 import { ISessionsService } from '../../../services/sessions/browser/sessionsService.js';
 import { ISession } from '../../../services/sessions/common/session.js';
 import { ISessionsManagementService } from '../../../services/sessions/common/sessionsManagement.js';
@@ -225,6 +226,11 @@ export class FolderTabsWidget extends Disposable {
 				? localize('folderTabs.tabHoverMany', "{0} — {1} sessions. Click to switch to this folder.", tab.label, tab.sessionCount)
 				: localize('folderTabs.tabHover', "{0} — click to switch to this folder.", tab.label)));
 		this._onActivate(node, () => this._activateTab(tab));
+		this._tabsDisposables.add(dom.addDisposableListener(node, dom.EventType.CONTEXT_MENU, (e: MouseEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			void this._commandService.executeCommand(SHOW_PROJECT_FOLDER_MENU_COMMAND_ID, { x: e.clientX, y: e.clientY });
+		}));
 
 		if (tab.active) {
 			const chevron = dom.append(node, $('.group-chevron'));

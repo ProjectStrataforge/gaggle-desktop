@@ -92,6 +92,24 @@ suite('gaggleSessionStore (114)', () => {
 		assert.deepStrictEqual(await store.list(), []);
 	});
 
+	test('seedTurns writes the carry in one shot and survives a relaunch', async () => {
+		const session = AgentSession.uri('gaggle', 'carried');
+		await store.create(session, { sessionId: 'carried', createdAt: new Date().toISOString(), carriedFrom: '/repos/alpha' });
+		await store.seedTurns(session, [
+			{ ...turn('t1', 'what did we decide', 'a handoff'), carried: true, folder: '/repos/alpha' },
+			{ ...turn('t2', 'and then', 'the model must see it'), carried: true, folder: '/repos/alpha' },
+		]);
+		const file = join(root, 'carried', GAGGLE_TURNS_FILE);
+		assert.strictEqual(fs.readFileSync(file, 'utf8').trim().split('\n').length, 2);
+		const relaunched = new GaggleSessionStore(fakeSessionData(root), new NullLogService());
+		const turns = await relaunched.readTurns(session);
+		assert.deepStrictEqual(turns.map(t => [t.turnId, t.carried, t.folder]), [
+			['t1', true, '/repos/alpha'],
+			['t2', true, '/repos/alpha'],
+		]);
+		assert.strictEqual((await relaunched.read(session))?.carriedFrom, '/repos/alpha');
+	});
+
 	test('update patches the record; remove deletes the directory', async () => {
 		const session = AgentSession.uri('gaggle', 'upd');
 		await store.create(session, { sessionId: 'upd', createdAt: new Date().toISOString() });

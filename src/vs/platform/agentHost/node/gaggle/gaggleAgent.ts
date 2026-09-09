@@ -451,22 +451,34 @@ export class GaggleAgent extends Disposable implements IAgent {
 	// ---- sessions ---------------------------------------------------------------------------
 
 	async createSession(config?: IAgentCreateSessionConfig): Promise<IAgentCreateSessionResult> {
+		// FR-009: refuse before any write — including a carry that would seed a
+		// session that cannot run.
 		if (!anyHopConfigured(this._env)) {
 			throw new Error(gaggleCopy.noHopConfigured());
 		}
 		const sessionId = config?.session ? AgentSession.id(config.session) : generateUuid();
 		const session = AgentSession.uri(GAGGLE_PROVIDER_ID, sessionId);
 		const folderUri = config?.workingDirectories?.[0];
+		const imported = config?.importConversation;
 		const record: GaggleSessionRecord = {
 			sessionId,
 			folder: folderUri?.fsPath,
 			createdAt: new Date().toISOString(),
-			modelId: config?.model?.id,
+			modelId: imported?.model?.id ?? config?.model?.id,
 			// 121: the plane this session talks to, if the operator chose one.
-			// A name from the assignment, never a URL.
+			// A name from the assignment, never a URL. A carry keeps the source
+			// session's plane (FR-010) when the create config still names it.
 			hopProfile: hopProfileFromConfig(config),
+			carriedFrom: imported ? importedSourceFolder(imported.turns, folderUri?.fsPath) : undefined,
 		};
 		await this._sessionStore.create(session, record);
+		if (imported?.turns.length) {
+			const sourceFolder = record.carriedFrom;
+			const seeded = imported.turns.map(turn => carriedRecordFromTurn(turn, sourceFolder));
+			await this._sessionStore.seedTurns(session, seeded);
+			// Session id, project NAME, turn count — never a path, never prompt text.
+			this._logService.info(`gaggle carry: session ${sessionId} project ${folderUri ? basename(folderUri) : 'none'} turns ${seeded.length}`);
+		}
 		this._sessions.set(session.toString(), { session, record, memoryNoticeShown: false, clients: new Map() });
 		this._onDidChangeSessionList.fire();
 		return {
@@ -724,6 +736,7 @@ export class GaggleAgent extends Disposable implements IAgent {
 				usage: outcome.usage,
 				state: outcome.state,
 				error: outcome.error ? { message: outcome.error.message, code: outcome.error.errorType } : undefined,
+				folder: state.record.folder,
 			};
 			await this._sessionStore.appendTurn(state.session, turn);
 			if (!state.record.title) {
@@ -797,6 +810,42 @@ export class GaggleAgent extends Disposable implements IAgent {
 		}
 		super.dispose();
 	}
+}
+
+/**
+ * Gaggle 123: map a protocol turn into a carried store record. Prompt is the
+ * message text; reply is concatenated markdown parts. `folder` is the source
+ * (stamped on the turn's `_meta.gaggleCarriedFrom` by the sessions-window
+ * producer, never invented here).
+ */
+export function carriedRecordFromTurn(turn: Turn, sourceFolder?: string): GaggleTurnRecord {
+	const folder = sourceFolder
+		?? (typeof turn.message._meta?.gaggleCarriedFrom === 'string' ? turn.message._meta.gaggleCarriedFrom : undefined);
+	const state = turn.state === TurnState.Cancelled ? 'cancelled' : turn.state === TurnState.Error ? 'error' : 'complete';
+	return {
+		turnId: turn.id,
+		startedAt: turn.startedAt ?? new Date().toISOString(),
+		durationMs: turn.duration ?? 0,
+		prompt: turn.message.text,
+		replyMarkdown: turn.responseParts
+			.filter((part): part is Extract<ResponsePart, { kind: ResponsePartKind.Markdown }> => part.kind === ResponsePartKind.Markdown)
+			.map(part => part.content)
+			.join(''),
+		state,
+		error: turn.error ? { message: turn.error.message, code: turn.error.errorType } : undefined,
+		carried: true,
+		folder,
+	};
+}
+
+function importedSourceFolder(turns: readonly Turn[], _targetFolder?: string): string | undefined {
+	for (const turn of turns) {
+		const raw = turn.message._meta?.gaggleCarriedFrom;
+		if (typeof raw === 'string' && raw.trim()) {
+			return raw.trim();
+		}
+	}
+	return undefined;
 }
 
 /** True when SovereignDB memory can be wired for this process (used by the mains to pick the bridge). */
