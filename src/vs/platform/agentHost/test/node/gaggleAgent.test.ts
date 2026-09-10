@@ -349,4 +349,70 @@ suite('gaggleAgent (114)', () => {
 			a.dispose();
 		}
 	});
+
+	// 1421: Fork Conversation produced a session whose transcript rendered the
+	// source turns and whose store was empty -- history the model never
+	// received. The host seeds its protocol state on fork; the provider must
+	// seed the store it builds requests from, the way a carry already does.
+	test('a session-level fork seeds the store up to the forked turn, under the ids the host allocated (#1421)', async () => {
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' });
+		try {
+			const source = await a.createSession({
+				workingDirectories: [URI.file(root)],
+				importConversation: {
+					turns: [
+						{ id: 's-1', message: { text: 'first question', origin: { kind: MessageKind.User } }, responseParts: [{ kind: ResponsePartKind.Markdown, id: 's-1#reply', content: 'first answer' }], usage: undefined, state: TurnState.Complete },
+						{ id: 's-2', message: { text: 'second question', origin: { kind: MessageKind.User } }, responseParts: [{ kind: ResponsePartKind.Markdown, id: 's-2#reply', content: 'second answer' }], usage: undefined, state: TurnState.Complete },
+						{ id: 's-3', message: { text: 'third question', origin: { kind: MessageKind.User } }, responseParts: [{ kind: ResponsePartKind.Markdown, id: 's-3#reply', content: 'third answer' }], usage: undefined, state: TurnState.Complete },
+					],
+				},
+			});
+			const forked = await a.createSession({
+				workingDirectories: [URI.file(root)],
+				fork: { session: source.session, turnIndex: 1, turnId: 's-2', turnIdMapping: new Map([['s-1', 'f-1'], ['s-2', 'f-2']]) },
+			});
+			const messages = await a.getSessionMessages(forked.session);
+			// Exactly the turns up to the fork point, and none after it.
+			assert.deepStrictEqual(messages.map(m => m.message.text), ['first question', 'second question']);
+			// Under the host's ids, so the protocol state and this store name the same turns.
+			assert.deepStrictEqual(messages.map(m => m.id), ['f-1', 'f-2']);
+			const replies = messages.map(m => {
+				const reply = m.responseParts.find(p => p.kind === ResponsePartKind.Markdown);
+				return reply?.kind === ResponsePartKind.Markdown ? reply.content : undefined;
+			});
+			assert.deepStrictEqual(replies, ['first answer', 'second answer']);
+			// The source is untouched by being forked.
+			assert.strictEqual((await a.getSessionMessages(source.session)).length, 3);
+		} finally {
+			a.dispose();
+		}
+	});
+
+	test('a fork whose turn id this store does not hold falls back to the index; a source it does not hold inherits nothing and does not throw (#1421)', async () => {
+		const a = agent({ SMR_BASE_URL: 'http://127.0.0.1:8000', SMR_HEALTHZ_PATH: '/healthz' });
+		try {
+			const source = await a.createSession({
+				workingDirectories: [URI.file(root)],
+				importConversation: {
+					turns: [
+						{ id: 's-1', message: { text: 'only question', origin: { kind: MessageKind.User } }, responseParts: [], usage: undefined, state: TurnState.Complete },
+						{ id: 's-2', message: { text: 'later question', origin: { kind: MessageKind.User } }, responseParts: [], usage: undefined, state: TurnState.Complete },
+					],
+				},
+			});
+			const byIndex = await a.createSession({
+				workingDirectories: [URI.file(root)],
+				fork: { session: source.session, turnIndex: 0, turnId: 'not-a-turn-here' },
+			});
+			assert.deepStrictEqual((await a.getSessionMessages(byIndex.session)).map(m => m.message.text), ['only question']);
+
+			const foreign = await a.createSession({
+				workingDirectories: [URI.file(root)],
+				fork: { session: AgentSession.uri('someone-else', 'never-stored'), turnIndex: 3, turnId: 'x' },
+			});
+			assert.deepStrictEqual(await a.getSessionMessages(foreign.session), []);
+		} finally {
+			a.dispose();
+		}
+	});
 });

@@ -478,6 +478,26 @@ export class GaggleAgent extends Disposable implements IAgent {
 			await this._sessionStore.seedTurns(session, seeded);
 			// Session id, project NAME, turn count — never a path, never prompt text.
 			this._logService.info(`gaggle carry: session ${sessionId} project ${folderUri ? basename(folderUri) : 'none'} turns ${seeded.length}`);
+		} else if (config?.fork) {
+			// 1421: a fork seeds THIS store, not only the host's protocol state.
+			//
+			// The host copies the source session's turns into the forked
+			// session's protocol state (agentService.createSession), so the
+			// transcript renders the history. But every model request is built
+			// from this store (_messagesFor over readTurns), and a fork left it
+			// empty: the operator saw a conversation the model had never
+			// received, with nothing anywhere saying so.
+			//
+			// Same mechanism as a carry. The source's records up to and
+			// including the forked turn, re-keyed to the ids the host allocated
+			// for the fork, so both stores describe the same turns.
+			const fork = config.fork;
+			const seeded = await this._forkedTurns(fork);
+			if (seeded.length) {
+				await this._sessionStore.seedTurns(session, seeded);
+			}
+			// Session ids and a count — never a path, never prompt text.
+			this._logService.info(`gaggle fork: session ${sessionId} from ${AgentSession.id(fork.session)} turns ${seeded.length}`);
 		}
 		this._sessions.set(session.toString(), { session, record, memoryNoticeShown: false, clients: new Map() });
 		this._onDidChangeSessionList.fire();
@@ -486,6 +506,33 @@ export class GaggleAgent extends Disposable implements IAgent {
 			project: folderUri ? { uri: folderUri, displayName: basename(folderUri) } : undefined,
 			resolvedWorkingDirectory: folderUri,
 		};
+	}
+
+	/**
+	 * The records a fork inherits: the source session's turns up to and
+	 * including the forked one, under the ids the host allocated for the fork.
+	 *
+	 * The cut is found by TURN ID first, because that is the fact the gesture
+	 * carries; `turnIndex` is the host's index into ITS turn list and is used
+	 * only when the id is not in this store. A source this store does not hold
+	 * (a session of another provider, or one already deleted) yields nothing
+	 * rather than throwing — the fork still exists, it just inherits nothing,
+	 * and the log line says how many turns it got.
+	 */
+	private async _forkedTurns(fork: NonNullable<IAgentCreateSessionConfig['fork']>): Promise<GaggleTurnRecord[]> {
+		let source: GaggleTurnRecord[];
+		try {
+			source = await this._sessionStore.readTurns(this._sessionOf(fork.session));
+		} catch {
+			return [];
+		}
+		const byId = source.findIndex(turn => turn.turnId === fork.turnId);
+		const cut = byId >= 0 ? byId : Math.min(fork.turnIndex, source.length - 1);
+		if (cut < 0) {
+			return [];
+		}
+		const mapping = fork.turnIdMapping;
+		return source.slice(0, cut + 1).map(turn => ({ ...turn, turnId: mapping?.get(turn.turnId) ?? turn.turnId }));
 	}
 
 	private _sessionOf(chatOrSession: URI): URI {
